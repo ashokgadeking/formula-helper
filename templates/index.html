@@ -1,0 +1,778 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Formula Helper</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:rgb(13,13,20);--card:rgb(22,22,34);--line:rgb(40,40,58);
+  --white:rgb(235,235,245);--dim:rgb(110,110,135);
+  --green:rgb(68,210,110);--blue:rgb(90,170,255);
+  --yellow:rgb(255,200,55);--red:rgb(255,75,75);
+  --btn:rgb(38,38,58);--btn-pr:rgb(25,25,40);
+}
+html,body{height:100%;background:var(--bg);color:var(--white);
+  font-family:-apple-system,system-ui,sans-serif;touch-action:manipulation;
+  -webkit-tap-highlight-color:transparent;overflow:hidden}
+.screen{display:none;flex-direction:column;height:100%;width:100%;position:absolute;top:0;left:0}
+.screen.active{display:flex}
+button{border:none;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent}
+button:active{filter:brightness(0.7)}
+
+/* ── Main screen ────────────────────────────────── */
+.banner{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  position:relative;transition:background .3s}
+.banner.expired{background:rgb(80,10,10)}
+.banner-sub{font-size:1rem;color:var(--dim);margin-bottom:8px;letter-spacing:1px}
+.banner.expired .banner-sub{color:rgb(255,160,160)}
+.banner-time{font-size:4rem;font-weight:bold;color:var(--green)}
+.banner.expired .banner-time{font-size:3.5rem;color:var(--red)}
+.countdown-corner{position:absolute;top:12px;right:16px;text-align:center}
+.countdown-val{font-size:1.6rem;font-weight:bold}
+.countdown-label{font-size:0.6rem;color:var(--dim)}
+.gear{position:absolute;top:12px;left:12px;width:36px;height:36px;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;
+  color:var(--dim);font-size:1.5rem}
+
+.btn-grid{display:grid;grid-template-columns:1fr 1fr 1fr;flex-shrink:0}
+.btn-grid button{height:80px;font-size:1rem;font-weight:bold;
+  border-top:1px solid rgba(80,80,80,.6);color:var(--white)}
+.btn-grid button:nth-child(2),.btn-grid button:nth-child(5){
+  border-left:1px solid rgba(80,80,80,.6);border-right:1px solid rgba(80,80,80,.6)}
+.btn-grid button:nth-child(4),.btn-grid button:nth-child(5),.btn-grid button:nth-child(6){
+  border-top:1px solid rgba(80,80,80,.6)}
+.start-btn{background:rgb(28,70,38);color:var(--green)!important}
+.start-btn .num{font-size:2rem;display:block;line-height:1.1}
+.start-btn .sub{font-size:.65rem;opacity:.5;display:block}
+.log-btn{background:rgb(55,45,20);color:var(--yellow)!important}
+.samples-btn{background:rgb(22,40,60);color:var(--blue)!important}
+.custom-btn{background:rgb(45,25,50);color:rgb(180,120,255)!important}
+
+/* ── Samples screen ─────────────────────────────── */
+.samples-grid{flex:1;display:grid;grid-template-columns:repeat(4,1fr)}
+.sample-card{display:flex;flex-direction:column;align-items:center;justify-content:center;
+  border-right:1px solid var(--line);position:relative}
+.sample-card:nth-child(even){background:rgb(38,38,52)}
+.sample-card:last-child{border-right:none}
+.sample-half{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%}
+.sample-half+.sample-half{border-top:1px solid var(--line)}
+.sample-lbl{font-size:.65rem;color:var(--dim);letter-spacing:1px;margin-bottom:4px}
+.sample-val{font-size:2.8rem;font-weight:bold;line-height:1}
+.sample-unit{font-size:.9rem;color:var(--dim);margin-top:4px}
+.water-val{color:var(--blue)}.powder-val{color:var(--green)}
+
+/* ── Log screen ──────────────────────────────────── */
+.log-title{font-size:1.3rem;font-weight:bold;text-align:center;padding:16px 0 8px}
+.log-list{flex:1;overflow-y:auto;padding:8px 12px;display:flex;flex-direction:column;gap:8px}
+.log-empty{color:var(--dim);flex:1;display:flex;align-items:center;justify-content:center}
+.log-card{background:var(--card);border-radius:10px;padding:12px 14px;display:flex;
+  align-items:center;gap:12px;position:relative}
+.log-card:nth-child(odd){background:rgb(28,28,40)}
+.log-num{font-size:.7rem;color:var(--dim);min-width:18px;text-align:center}
+.log-info{flex:1;min-width:0}
+.log-text{font-size:.95rem;color:var(--white);font-weight:500}
+.log-leftover{font-size:.75rem;color:var(--yellow);margin-top:3px}
+.log-leftover.empty{color:var(--dim);font-style:italic}
+.log-actions{display:flex;gap:6px;flex-shrink:0}
+.log-act{width:36px;height:36px;border-radius:8px;display:flex;align-items:center;
+  justify-content:center;font-size:.85rem;color:var(--white);cursor:pointer;border:none}
+.log-act.leftover-btn{background:rgb(55,45,20);color:var(--yellow)}
+.log-act.edit-btn{background:rgb(28,50,70);color:var(--blue)}
+.log-act.del-btn{background:rgb(60,20,20);color:var(--red)}
+
+/* ── Log modal overlay ──────────────────────────── */
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);
+  z-index:100;align-items:center;justify-content:center}
+.modal-overlay.active{display:flex}
+.modal{background:rgb(30,30,44);border-radius:14px;padding:24px;width:min(90%,360px);
+  display:flex;flex-direction:column;gap:16px}
+.modal-title{font-size:1.1rem;font-weight:bold;text-align:center;color:var(--white)}
+.modal input{background:rgb(18,18,28);border:1px solid var(--line);border-radius:8px;
+  padding:12px;font-size:1rem;color:var(--white);width:100%;outline:none;
+  font-family:inherit}
+.modal input:focus{border-color:var(--blue)}
+.modal-btns{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.modal-btns button{padding:12px;border-radius:8px;font-size:.95rem;font-weight:bold}
+.modal-cancel{background:var(--btn);color:var(--white)}
+.modal-save{background:rgb(28,70,38);color:var(--green)}
+
+/* ── Trends screen ──────────────────────────────── */
+.trends-title{font-size:1.3rem;font-weight:bold;text-align:center;padding:16px 0 4px}
+.trends-tabs{display:flex;justify-content:center;gap:8px;padding:8px 12px;flex-shrink:0}
+.trends-tab{padding:8px 18px;border-radius:20px;font-size:.8rem;font-weight:bold;
+  background:var(--btn);color:var(--dim);border:none}
+.trends-tab.active{background:rgb(28,50,70);color:var(--blue)}
+.trends-chart{flex:1;padding:8px 12px;position:relative;min-height:0}
+.trends-chart canvas{width:100%!important;height:100%!important}
+.trends-summary{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;padding:8px 12px;flex-shrink:0}
+.trends-stat{background:var(--card);border-radius:10px;padding:10px;text-align:center}
+.trends-stat-val{font-size:1.4rem;font-weight:bold;color:var(--blue)}
+.trends-stat-lbl{font-size:.65rem;color:var(--dim);letter-spacing:1px;margin-top:2px}
+
+/* ── Calculator screen ───────────────────────────── */
+.calc-body{flex:1;display:grid;grid-template-columns:1fr 1fr}
+.calc-side{display:flex;flex-direction:column;align-items:center;justify-content:center;position:relative}
+.calc-side.water{background:var(--card)}
+.calc-side.powder{background:rgb(18,44,26)}
+.calc-side.powder.zero{background:var(--card)}
+.calc-lbl{font-size:.7rem;color:var(--dim);letter-spacing:1px;margin-bottom:8px}
+.calc-val{font-size:5rem;font-weight:bold;line-height:1}
+.calc-unit{font-size:1.2rem;color:var(--dim);margin-top:8px}
+.calc-pm-row{display:grid;grid-template-columns:1fr 1fr;position:absolute;
+  bottom:0;left:0;right:0}
+.calc-pm-btn{height:56px;font-size:2rem;font-weight:bold;cursor:pointer;border:none}
+.calc-minus-btn{background:rgb(50,28,28);color:var(--red)}
+.calc-plus-btn{background:rgb(28,50,70);color:var(--blue);
+  border-left:1px solid rgba(80,80,80,.6)}
+
+/* ── Settings screen ─────────────────────────────── */
+.settings-title{font-size:1.3rem;font-weight:bold;text-align:center;padding:20px 0}
+.setting-row{display:flex;align-items:center;justify-content:center;gap:16px;padding:16px 0}
+.setting-label{font-size:.8rem;color:var(--dim);text-align:center;letter-spacing:1px}
+.setting-val{font-size:2rem;font-weight:bold;min-width:100px;text-align:center}
+.setting-btn{width:50px;height:50px;border-radius:8px;font-size:1.5rem;font-weight:bold}
+.setting-plus{background:rgb(28,50,70);color:var(--blue)}
+.setting-minus{background:rgb(50,28,28);color:var(--red)}
+
+/* ── Bottom bar (back / actions) ─────────────────── */
+.bottom-bar{display:grid;flex-shrink:0;border-top:2px solid rgb(80,80,80)}
+.bottom-bar.single{grid-template-columns:1fr}
+.bottom-bar.split{grid-template-columns:1fr 1fr}
+.bottom-bar button{height:70px;font-size:1rem;font-weight:bold;background:var(--btn);color:var(--white)}
+.bottom-bar .start-timer-btn{background:rgb(28,70,38);color:var(--green)}
+.bottom-bar .split button+button{border-left:2px solid rgb(80,80,80)}
+</style>
+</head>
+<body>
+
+<!-- ══ MAIN ══════════════════════════════════════ -->
+<div id="main-screen" class="screen active">
+  <div class="banner" id="banner">
+    <div class="gear" onclick="showScreen('settings')">&#9881;</div>
+    <div class="countdown-corner" id="cd-corner" style="display:none">
+      <div class="countdown-val" id="cd-val"></div>
+      <div class="countdown-label">remaining</div>
+    </div>
+    <div class="banner-sub" id="banner-sub">NO BOTTLE MIXED YET</div>
+    <div class="banner-time" id="banner-time" style="display:none"></div>
+  </div>
+  <div class="btn-grid">
+    <button class="start-btn" onclick="startTimer(60)"><span class="sub">start</span><span class="num">60</span></button>
+    <button class="start-btn" onclick="startTimer(90)"><span class="sub">start</span><span class="num">90</span></button>
+    <button class="start-btn" onclick="startTimer(120)"><span class="sub">start</span><span class="num">120</span></button>
+    <button class="log-btn" onclick="showScreen('log')">Log</button>
+    <button class="samples-btn" onclick="showScreen('samples')">Sample Sizes</button>
+    <button class="custom-btn" onclick="showScreen('calculator')">Custom Amount</button>
+  </div>
+</div>
+
+<!-- ══ SAMPLES ═══════════════════════════════════ -->
+<div id="samples-screen" class="screen">
+  <div class="samples-grid" id="samples-grid"></div>
+  <div class="bottom-bar single"><button onclick="showScreen('main')">Back</button></div>
+</div>
+
+<!-- ══ LOG ════════════════════════════════════════ -->
+<div id="log-screen" class="screen">
+  <div style="display:flex;align-items:center;justify-content:center;padding:12px 0 4px;gap:12px;flex-shrink:0;position:relative">
+    <button id="log-prev" onclick="logNav(-1)" style="width:40px;height:32px;border-radius:8px;background:var(--btn);color:var(--dim);font-size:1.1rem;font-weight:bold">&lt;</button>
+    <div style="text-align:center">
+      <div class="log-title" id="log-date-label" style="padding:0">Today</div>
+      <div id="log-count" style="font-size:.7rem;color:var(--dim)"></div>
+    </div>
+    <button id="log-next" onclick="logNav(1)" style="width:40px;height:32px;border-radius:8px;background:var(--btn);color:var(--dim);font-size:1.1rem;font-weight:bold">&gt;</button>
+    <div id="backup-status" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:.6rem;letter-spacing:.5px"></div>
+  </div>
+  <div class="log-list" id="log-list"></div>
+  <div class="bottom-bar split">
+    <button onclick="showScreen('main')">Back</button>
+    <button onclick="showScreen('trends')" style="background:rgb(22,40,60);color:var(--blue)">Trends</button>
+  </div>
+</div>
+
+<!-- ══ TRENDS ════════════════════════════════════ -->
+<div id="trends-screen" class="screen">
+  <div class="trends-title">CONSUMPTION TRENDS</div>
+  <div class="trends-tabs">
+    <button class="trends-tab active" onclick="setTrendRange('week',this)">Week</button>
+    <button class="trends-tab" onclick="setTrendRange('month',this)">Month</button>
+    <button class="trends-tab" onclick="setTrendRange('year',this)">Year</button>
+    <button class="trends-tab" onclick="setTrendRange('all',this)">All</button>
+  </div>
+  <div class="trends-summary" id="trends-summary">
+    <div class="trends-stat"><div class="trends-stat-val" id="ts-total">0</div><div class="trends-stat-lbl">TOTAL ML</div></div>
+    <div class="trends-stat"><div class="trends-stat-val" id="ts-count">0</div><div class="trends-stat-lbl">BOTTLES</div></div>
+    <div class="trends-stat"><div class="trends-stat-val" id="ts-avg">0</div><div class="trends-stat-lbl">AVG ML/DAY</div></div>
+  </div>
+  <div class="trends-chart"><canvas id="trends-canvas"></canvas></div>
+  <div class="bottom-bar single"><button onclick="showScreen('log')">Back</button></div>
+</div>
+
+<!-- ── Modal for edit / leftover ─────────────────── -->
+<div class="modal-overlay" id="modal-overlay" onclick="if(event.target===this)closeModal()">
+  <div class="modal">
+    <div class="modal-title" id="modal-title">Edit</div>
+    <input id="modal-input" type="text" autocomplete="off">
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeModal()">Cancel</button>
+      <button class="modal-save" onclick="saveModal()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ CALCULATOR ════════════════════════════════ -->
+<div id="calculator-screen" class="screen">
+  <div class="calc-body">
+    <div class="calc-side water">
+      <div class="calc-lbl">WATER</div>
+      <div class="calc-val" id="calc-water" style="color:var(--blue)">60</div>
+      <div class="calc-unit">ml</div>
+      <div class="calc-pm-row">
+        <button class="calc-pm-btn calc-minus-btn" onclick="calcAdjust(-10)">-</button>
+        <button class="calc-pm-btn calc-plus-btn" onclick="calcAdjust(10)">+</button>
+      </div>
+    </div>
+    <div class="calc-side powder" id="calc-powder-side">
+      <div class="calc-lbl" id="calc-powder-lbl" style="color:var(--green)">POWDER</div>
+      <div class="calc-val" id="calc-powder" style="color:var(--green)">8.3</div>
+      <div class="calc-unit">g</div>
+    </div>
+  </div>
+  <div class="bottom-bar split">
+    <button onclick="showScreen('main')">Back</button>
+    <button class="start-timer-btn" onclick="calcStart()">Start Timer</button>
+  </div>
+</div>
+
+<!-- ══ SETTINGS ══════════════════════════════════ -->
+<div id="settings-screen" class="screen">
+  <div class="settings-title">SETTINGS</div>
+  <div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:24px">
+    <div>
+      <div class="setting-label">EXPIRY TIMER</div>
+      <div class="setting-row">
+        <button class="setting-btn setting-minus" onclick="adjTimer(-1)">-</button>
+        <div class="setting-val" id="timer-val" style="color:var(--blue)"></div>
+        <button class="setting-btn setting-plus" onclick="adjTimer(1)">+</button>
+      </div>
+    </div>
+    <div>
+      <div class="setting-label">SCREENSAVER TIMEOUT</div>
+      <div class="setting-row">
+        <button class="setting-btn setting-minus" onclick="adjSS(-1)">-</button>
+        <div class="setting-val" id="ss-val" style="color:var(--yellow)"></div>
+        <button class="setting-btn setting-plus" onclick="adjSS(1)">+</button>
+      </div>
+    </div>
+  </div>
+  <div class="bottom-bar split">
+    <button onclick="showScreen('main')">Back</button>
+    <button onclick="resetTimer()" style="background:rgb(55,45,20);color:var(--yellow)">Reset Timer</button>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<script>
+let state = {};
+let calcWater = 60;
+const POWDER_PER_60 = 8.3;
+let trendRange = 'week';
+let trendChart = null;
+
+function showScreen(name) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(name + '-screen').classList.add('active');
+  if (name === 'main') pollState();
+  if (name === 'log') { logViewDate = new Date().toISOString().slice(0, 10); pollState(); }
+  if (name === 'trends') { pollState().then(() => updateTrends()); }
+}
+
+function pad2(n) { return String(n).padStart(2, '0'); }
+
+function timerColor(secs) {
+  if (secs > 1800) return 'var(--green)';
+  if (secs > 600) return 'var(--yellow)';
+  if (secs > 300) return 'rgb(255,140,30)';
+  return 'var(--red)';
+}
+
+function updateMain() {
+  const banner = document.getElementById('banner');
+  const sub = document.getElementById('banner-sub');
+  const time_el = document.getElementById('banner-time');
+  const cdCorner = document.getElementById('cd-corner');
+  const cdVal = document.getElementById('cd-val');
+
+  if (!state.mixed_at_str) {
+    banner.classList.remove('expired');
+    banner.style.background = '';
+    sub.textContent = 'NO BOTTLE MIXED YET';
+    sub.style.color = '';
+    time_el.style.display = 'none';
+    cdCorner.style.display = 'none';
+    return;
+  }
+
+  const mlStr = state.mixed_ml ? state.mixed_ml + 'ml ' : '';
+
+  if (state.expired) {
+    banner.classList.add('expired');
+    sub.textContent = mlStr + 'MIXED AT ' + state.mixed_at_str;
+    time_el.textContent = 'EXPIRED';
+    time_el.style.display = '';
+    time_el.style.color = 'var(--red)';
+    time_el.style.fontSize = '3.5rem';
+    cdCorner.style.display = 'none';
+  } else {
+    banner.classList.remove('expired');
+    banner.style.background = '';
+    sub.textContent = mlStr + 'MIXED AT';
+    sub.style.color = '';
+    time_el.textContent = state.mixed_at_str;
+    time_el.style.display = '';
+    time_el.style.color = 'var(--green)';
+    time_el.style.fontSize = '4rem';
+
+    if (state.remaining_secs > 0) {
+      const m = Math.floor(state.remaining_secs / 60);
+      const s = Math.floor(state.remaining_secs % 60);
+      cdVal.textContent = pad2(m) + ':' + pad2(s);
+      cdVal.style.color = timerColor(state.remaining_secs);
+      cdCorner.style.display = '';
+    } else {
+      cdCorner.style.display = 'none';
+    }
+  }
+}
+
+function updateSamples() {
+  const grid = document.getElementById('samples-grid');
+  if (!state.combos || grid.children.length) return;
+  state.combos.forEach((c, i) => {
+    const card = document.createElement('div');
+    card.className = 'sample-card';
+    card.innerHTML =
+      '<div class="sample-half"><div class="sample-lbl">WATER</div>' +
+      '<div class="sample-val water-val">' + c[0] + '</div>' +
+      '<div class="sample-unit">ml</div></div>' +
+      '<div class="sample-half"><div class="sample-lbl">POWDER</div>' +
+      '<div class="sample-val powder-val">' + c[1].toFixed(1) + '</div>' +
+      '<div class="sample-unit">g</div></div>';
+    grid.appendChild(card);
+  });
+}
+
+let modalMode = '';  // 'edit' or 'leftover'
+let modalIdx = -1;
+let logViewDate = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+
+function entryText(e) { return typeof e === 'string' ? e : (e.text || ''); }
+function entryLeftover(e) { return typeof e === 'object' ? (e.leftover || '') : ''; }
+function entryDate(e) {
+  if (typeof e === 'object' && e.date) return e.date.split(' ')[0];
+  return '';
+}
+
+function getLogDates() {
+  if (!state.mix_log) return [];
+  const s = new Set();
+  state.mix_log.forEach(e => { const d = entryDate(e); if (d) s.add(d); });
+  return [...s].sort();
+}
+
+function formatDateLabel(d) {
+  const today = new Date().toISOString().slice(0, 10);
+  if (d === today) return 'Today';
+  const y = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  if (d === y) return 'Yesterday';
+  if (!d) return 'Undated';
+  const dt = new Date(d + 'T00:00:00');
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return months[dt.getMonth()] + ' ' + dt.getDate() + ', ' + dt.getFullYear();
+}
+
+function logNav(dir) {
+  const dates = getLogDates();
+  const undated = state.mix_log && state.mix_log.some(e => !entryDate(e));
+  const idx = dates.indexOf(logViewDate);
+  if (dir < 0) {
+    if (idx > 0) logViewDate = dates[idx - 1];
+    else if (idx === 0 && undated) logViewDate = '';
+  } else {
+    if (logViewDate === '' && dates.length) logViewDate = dates[0];
+    else if (idx >= 0 && idx < dates.length - 1) logViewDate = dates[idx + 1];
+  }
+  updateLog();
+}
+
+function updateLog() {
+  const list = document.getElementById('log-list');
+  list.innerHTML = '';
+
+  // Backup status
+  const bsEl = document.getElementById('backup-status');
+  if (state.backup_status && state.backup_status.time) {
+    if (state.backup_status.ok) {
+      bsEl.textContent = 'Backed up ' + state.backup_status.time;
+      bsEl.style.color = 'rgb(50,140,70)';
+    } else {
+      bsEl.textContent = 'Backup failed ' + state.backup_status.time;
+      bsEl.style.color = 'rgb(180,60,60)';
+    }
+  } else {
+    bsEl.textContent = '';
+  }
+
+  // Date label
+  document.getElementById('log-date-label').textContent = formatDateLabel(logViewDate);
+
+  // Prev/next visibility
+  const dates = getLogDates();
+  const undated = state.mix_log && state.mix_log.some(e => !entryDate(e));
+  const idx = dates.indexOf(logViewDate);
+  const hasPrev = (idx > 0) || (idx === 0 && undated);
+  const hasNext = (logViewDate === '' && dates.length > 0) || (idx >= 0 && idx < dates.length - 1);
+  document.getElementById('log-prev').style.visibility = hasPrev ? 'visible' : 'hidden';
+  document.getElementById('log-next').style.visibility = hasNext ? 'visible' : 'hidden';
+
+  if (!state.mix_log || !state.mix_log.length) {
+    list.innerHTML = '<div class="log-empty">No mixes recorded yet</div>';
+    document.getElementById('log-count').textContent = '';
+    return;
+  }
+
+  // Filter by date
+  const filtered = [];
+  state.mix_log.forEach((e, i) => {
+    const d = entryDate(e);
+    if (logViewDate && d === logViewDate) filtered.push({e, i});
+    else if (!logViewDate && !d) filtered.push({e, i});
+  });
+
+  document.getElementById('log-count').textContent =
+    filtered.length ? filtered.length + ' bottle' + (filtered.length !== 1 ? 's' : '') : '';
+
+  if (!filtered.length) {
+    list.innerHTML = '<div class="log-empty">No entries for this day</div>';
+    return;
+  }
+
+  // Newest first
+  for (let fi = filtered.length - 1; fi >= 0; fi--) {
+    const {e, i} = filtered[fi];
+    const txt = entryText(e);
+    const lo = entryLeftover(e);
+    const card = document.createElement('div');
+    card.className = 'log-card';
+
+    const num = document.createElement('div');
+    num.className = 'log-num';
+    num.textContent = i + 1;
+
+    const info = document.createElement('div');
+    info.className = 'log-info';
+    const textDiv = document.createElement('div');
+    textDiv.className = 'log-text';
+    textDiv.textContent = txt;
+    info.appendChild(textDiv);
+    const loDiv = document.createElement('div');
+    loDiv.className = 'log-leftover' + (lo ? '' : ' empty');
+    loDiv.textContent = lo ? 'leftover: ' + lo : 'no leftover recorded';
+    info.appendChild(loDiv);
+
+    const actions = document.createElement('div');
+    actions.className = 'log-actions';
+    actions.innerHTML =
+      '<button class="log-act leftover-btn" onclick="openLeftover('+i+')" title="Add leftover">&#9874;</button>' +
+      '<button class="log-act edit-btn" onclick="openEdit('+i+')" title="Edit">&#9998;</button>' +
+      '<button class="log-act del-btn" onclick="deleteEntry('+i+')" title="Delete">&#10005;</button>';
+
+    card.appendChild(num);
+    card.appendChild(info);
+    card.appendChild(actions);
+    list.appendChild(card);
+  }
+}
+
+function openEdit(idx) {
+  modalMode = 'edit';
+  modalIdx = idx;
+  document.getElementById('modal-title').textContent = 'Edit Entry';
+  document.getElementById('modal-input').value = entryText(state.mix_log[idx]);
+  document.getElementById('modal-input').placeholder = 'e.g. 60ml @ 02:30 PM';
+  document.getElementById('modal-overlay').classList.add('active');
+  document.getElementById('modal-input').focus();
+}
+
+function openLeftover(idx) {
+  modalMode = 'leftover';
+  modalIdx = idx;
+  document.getElementById('modal-title').textContent = 'Add Leftover';
+  document.getElementById('modal-input').value = entryLeftover(state.mix_log[idx]);
+  document.getElementById('modal-input').placeholder = 'e.g. 20ml remaining';
+  document.getElementById('modal-overlay').classList.add('active');
+  document.getElementById('modal-input').focus();
+}
+
+function closeModal() {
+  document.getElementById('modal-overlay').classList.remove('active');
+}
+
+async function saveModal() {
+  const val = document.getElementById('modal-input').value.trim();
+  const body = modalMode === 'edit' ? {text: val} : {leftover: val};
+  await fetch('/api/log/' + modalIdx, {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body)
+  });
+  closeModal();
+  await pollState();
+}
+
+async function deleteEntry(idx) {
+  if (!confirm('Delete this entry?')) return;
+  await fetch('/api/log/' + idx, {method: 'DELETE'});
+  await pollState();
+}
+
+function updateSettings() {
+  if (!state.settings) return;
+  const cs = state.settings.countdown_secs || 3900;
+  document.getElementById('timer-val').textContent =
+    cs >= 60 ? Math.floor(cs / 60) + ' min' : cs + ' sec';
+  document.getElementById('ss-val').textContent =
+    (state.settings.ss_timeout_min || 2) + ' min';
+}
+
+function updateCalc() {
+  document.getElementById('calc-water').textContent = calcWater;
+  const pw = calcWater * (POWDER_PER_60 / 60);
+  const side = document.getElementById('calc-powder-side');
+  const lbl = document.getElementById('calc-powder-lbl');
+  const val = document.getElementById('calc-powder');
+  if (calcWater > 0) {
+    side.classList.remove('zero');
+    lbl.style.color = 'var(--green)';
+    val.style.color = 'var(--green)';
+    val.textContent = pw.toFixed(1);
+  } else {
+    side.classList.add('zero');
+    lbl.style.color = 'var(--dim)';
+    val.style.color = 'var(--dim)';
+    val.textContent = '--';
+  }
+}
+
+function calcAdjust(delta) {
+  calcWater = Math.max(0, Math.min(500, calcWater + delta));
+  updateCalc();
+}
+
+async function calcStart() {
+  await fetch('/api/start', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ml: calcWater})
+  });
+  showScreen('main');
+  pollState();
+}
+
+async function startTimer(ml) {
+  await fetch('/api/start', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ml: ml})
+  });
+  pollState();
+}
+
+async function adjTimer(dir) {
+  const cs = state.settings.countdown_secs || 3900;
+  let next;
+  if (dir > 0) {
+    next = cs < 60 ? Math.min(cs + 10, 60) : Math.min(cs + 300, 10800);
+  } else {
+    next = cs <= 60 ? Math.max(cs - 10, 10) : Math.max(cs - 300, 60);
+  }
+  await fetch('/api/settings', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({countdown_secs: next})
+  });
+  state.settings.countdown_secs = next;
+  updateSettings();
+}
+
+async function resetTimer() {
+  await fetch('/api/reset-timer', {method: 'POST'});
+  await pollState();
+  showScreen('main');
+}
+
+function closeApp() {
+  alert('Close App is only available on the Pi display.');
+}
+
+async function adjSS(dir) {
+  const ss = state.settings.ss_timeout_min || 2;
+  const next = dir > 0 ? Math.min(ss + 1, 30) : Math.max(ss - 1, 1);
+  await fetch('/api/settings', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ss_timeout_min: next})
+  });
+  state.settings.ss_timeout_min = next;
+  updateSettings();
+}
+
+// ── Trends ──────────────────────────────────────
+function setTrendRange(range, btn) {
+  trendRange = range;
+  document.querySelectorAll('.trends-tab').forEach(t => t.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  updateTrends();
+}
+
+function parseEntryDate(e) {
+  if (typeof e === 'object' && e.date) {
+    // "2026-03-14 02:30 PM"
+    return new Date(e.date);
+  }
+  // Legacy string entries — no date available, skip
+  return null;
+}
+
+function entryMl(e) {
+  if (typeof e === 'object' && e.ml) return e.ml;
+  // Try parsing from text like "60ml @ ..."
+  const txt = typeof e === 'string' ? e : (e.text || '');
+  const m = txt.match(/^(\d+)ml/);
+  return m ? parseInt(m[1]) : 0;
+}
+
+function updateTrends() {
+  if (!state.mix_log) return;
+  const now = new Date();
+  let cutoff;
+  if (trendRange === 'week') cutoff = new Date(now - 7 * 86400000);
+  else if (trendRange === 'month') cutoff = new Date(now - 30 * 86400000);
+  else if (trendRange === 'year') cutoff = new Date(now - 365 * 86400000);
+  else cutoff = new Date(0);
+
+  // Group by date
+  const daily = {};
+  let totalMl = 0, count = 0;
+  for (const e of state.mix_log) {
+    const d = parseEntryDate(e);
+    const ml = entryMl(e);
+    if (!ml) continue;
+    if (d && d < cutoff) continue;
+    const key = d ? d.toISOString().slice(0, 10) : 'unknown';
+    if (key === 'unknown') continue;
+    daily[key] = (daily[key] || 0) + ml;
+    totalMl += ml;
+    count++;
+  }
+
+  // Fill in missing dates
+  const labels = [];
+  const data = [];
+  const days = Object.keys(daily).sort();
+  if (days.length > 0) {
+    let cur = new Date(days[0]);
+    const end = new Date(days[days.length - 1]);
+    while (cur <= end) {
+      const k = cur.toISOString().slice(0, 10);
+      labels.push(formatDateLabel(k));
+      data.push(daily[k] || 0);
+      cur.setDate(cur.getDate() + 1);
+    }
+  }
+
+  const numDays = Math.max(1, days.length);
+  document.getElementById('ts-total').textContent = totalMl;
+  document.getElementById('ts-count').textContent = count;
+  document.getElementById('ts-avg').textContent = Math.round(totalMl / numDays);
+
+  // Chart
+  const ctx = document.getElementById('trends-canvas');
+  if (trendChart) trendChart.destroy();
+  trendChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: 'ml',
+        data: data,
+        backgroundColor: 'rgba(90,170,255,0.6)',
+        borderColor: 'rgb(90,170,255)',
+        borderWidth: 1,
+        borderRadius: 4,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {display: false},
+        tooltip: {
+          backgroundColor: 'rgb(30,30,44)',
+          titleColor: 'rgb(235,235,245)',
+          bodyColor: 'rgb(110,110,135)',
+        }
+      },
+      scales: {
+        x: {
+          ticks: {color: 'rgb(110,110,135)', font: {size: 10}, maxRotation: 45},
+          grid: {color: 'rgba(40,40,58,0.5)'}
+        },
+        y: {
+          beginAtZero: true,
+          ticks: {color: 'rgb(110,110,135)', callback: v => v + 'ml'},
+          grid: {color: 'rgba(40,40,58,0.5)'}
+        }
+      }
+    }
+  });
+}
+
+function formatDateLabel(isoDate) {
+  const d = new Date(isoDate + 'T00:00:00');
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return months[d.getMonth()] + ' ' + d.getDate();
+}
+
+async function pollState() {
+  try {
+    const r = await fetch('/api/state');
+    state = await r.json();
+    updateMain();
+    updateSamples();
+    updateLog();
+    updateSettings();
+  } catch(e) {}
+}
+
+// Client-side countdown tick between polls
+setInterval(() => {
+  if (state.remaining_secs > 0) {
+    state.remaining_secs = Math.max(0, state.remaining_secs - 1);
+    if (state.remaining_secs <= 0) state.expired = true;
+    updateMain();
+  }
+}, 1000);
+
+// Poll server every 5 seconds for state sync
+setInterval(pollState, 5000);
+
+// Initial load
+pollState();
+updateCalc();
+</script>
+</body>
+</html>
