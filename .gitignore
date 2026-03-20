@@ -16,7 +16,7 @@ Thumbs.db
 
 # Images (large binary assets, except web icons)
 *.png
-!web/icon-*.png
+!web/*.png
 
 # IDE
 .vscode/

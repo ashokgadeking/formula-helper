@@ -202,6 +202,13 @@ button:active{transform:scale(.96);filter:brightness(.85)}
 .backup-indicator{position:absolute;right:14px;top:50%;transform:translateY(-50%);
   font-size:.55rem;letter-spacing:.3px;line-height:1.3;text-align:center;font-weight:500}
 
+/* ── Screensaver ──────────────────────────────── */
+.screensaver{position:fixed;inset:0;background:#000;z-index:150;display:none;cursor:none}
+.screensaver.active{display:block}
+.ss-sprite{position:absolute;width:80px;height:auto;opacity:.6}
+.ss-clock{position:absolute;font-size:2rem;font-weight:600;color:rgba(255,255,255,.08);
+  font-family:var(--font);letter-spacing:-1px}
+
 /* ── Auth overlay ──────────────────────────────── */
 .auth-overlay{position:fixed;inset:0;background:var(--bg);z-index:200;
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px}
@@ -222,6 +229,13 @@ button:active{transform:scale(.96);filter:brightness(.85)}
 </style>
 </head>
 <body>
+
+<!-- ══ SCREENSAVER ═══════════════════════════════ -->
+<div class="screensaver" id="screensaver" onclick="exitScreensaver()">
+  <img class="ss-sprite" id="ss-bottle" src="/bottle_vector.png" alt="">
+  <img class="ss-sprite" id="ss-baby" src="/baby.png" alt="">
+  <div class="ss-clock" id="ss-clock"></div>
+</div>
 
 <!-- ══ AUTH OVERLAY ══════════════════════════════ -->
 <div class="auth-overlay hidden" id="auth-overlay">
@@ -849,8 +863,9 @@ function updateTrends() {
   else if (trendRange === 'year') cutoff = new Date(now - 365 * 86400000);
   else cutoff = new Date(0);
 
-  // Group by date
-  const daily = {};
+  // Group by date — track total ml and leftover ml separately
+  const dailyTotal = {};
+  const dailyLeftover = {};
   let totalMl = 0, count = 0;
   for (const e of state.mix_log) {
     const d = parseEntryDate(e);
@@ -859,22 +874,29 @@ function updateTrends() {
     if (d && d < cutoff) continue;
     const key = d ? localDateStr(d) : 'unknown';
     if (key === 'unknown') continue;
-    daily[key] = (daily[key] || 0) + ml;
+    dailyTotal[key] = (dailyTotal[key] || 0) + ml;
+    // Parse leftover: "20", "20ml", "50" → number
+    const lo = e.leftover ? parseInt(String(e.leftover).replace(/[^0-9]/g, '')) || 0 : 0;
+    dailyLeftover[key] = (dailyLeftover[key] || 0) + lo;
     totalMl += ml;
     count++;
   }
 
   // Fill in missing dates
   const labels = [];
-  const data = [];
-  const days = Object.keys(daily).sort();
+  const dataConsumed = [];
+  const dataLeftover = [];
+  const days = Object.keys(dailyTotal).sort();
   if (days.length > 0) {
     let cur = new Date(days[0] + 'T00:00:00');
     const end = new Date(days[days.length - 1] + 'T00:00:00');
     while (cur <= end) {
       const k = localDateStr(cur);
       labels.push(formatChartDateLabel(k));
-      data.push(daily[k] || 0);
+      const total = dailyTotal[k] || 0;
+      const lo = dailyLeftover[k] || 0;
+      dataConsumed.push(total - lo);
+      dataLeftover.push(lo);
       cur.setDate(cur.getDate() + 1);
     }
   }
@@ -892,19 +914,26 @@ function updateTrends() {
     data: {
       labels: labels,
       datasets: [{
-        label: 'ml',
-        data: data,
+        label: 'Consumed',
+        data: dataConsumed,
         backgroundColor: 'rgba(90,170,255,0.5)',
         borderColor: 'rgba(90,170,255,0.8)',
         borderWidth: 1,
-        borderRadius: 6,
+        borderRadius: {topLeft: 0, topRight: 0, bottomLeft: 6, bottomRight: 6},
+      },{
+        label: 'Leftover',
+        data: dataLeftover,
+        backgroundColor: 'rgba(255,200,55,0.5)',
+        borderColor: 'rgba(255,200,55,0.7)',
+        borderWidth: 1,
+        borderRadius: {topLeft: 6, topRight: 6, bottomLeft: 0, bottomRight: 0},
       }]
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
-        legend: {display: false},
+        legend: {display: true, labels: {color: '#6e6e87', font: {family: 'Outfit', size: 10}, boxWidth: 12, padding: 12}},
         tooltip: {
           backgroundColor: 'rgba(20,20,34,0.95)',
           titleColor: '#ebebf5',
@@ -919,10 +948,12 @@ function updateTrends() {
       },
       scales: {
         x: {
+          stacked: true,
           ticks: {color: '#4a4a62', font: {size: 10, family: 'Outfit', weight: '500'}, maxRotation: 45},
           grid: {color: 'rgba(255,255,255,0.03)'}
         },
         y: {
+          stacked: true,
           beginAtZero: true,
           ticks: {color: '#4a4a62', font: {family: 'Outfit', weight: '500'}, callback: v => v + 'ml'},
           grid: {color: 'rgba(255,255,255,0.03)'}
@@ -1248,16 +1279,143 @@ window.fetch = function(url, opts) {
   return _origFetch.call(this, url, opts);
 };
 
-// Initial load — check auth first, then restore screen from hash
-checkAuth().then(() => {
-  return pollState();
-}).then(() => {
+// ── Screensaver ─────────────────────────────────
+const SS_TIMEOUT = 2 * 60 * 1000; // 2 minutes
+let ssActive = false;
+let ssLastInput = Date.now();
+let ssAnimFrame = null;
+
+// Sprite state: {x, y, dx, dy, el}
+const ssSprites = [];
+
+function initScreensaver() {
+  const bottle = document.getElementById('ss-bottle');
+  const baby = document.getElementById('ss-baby');
+  ssSprites.length = 0;
+  ssSprites.push({x: 150, y: 100, dx: 1.5, dy: 1.2, el: bottle});
+  ssSprites.push({x: 500, y: 250, dx: -1.2, dy: 1.5, el: baby});
+}
+
+function enterScreensaver() {
+  if (ssActive) return;
+  ssActive = true;
+  document.getElementById('screensaver').classList.add('active');
+  initScreensaver();
+  ssAnimate();
+}
+
+function exitScreensaver() {
+  ssActive = false;
+  ssLastInput = Date.now();
+  document.getElementById('screensaver').classList.remove('active');
+  if (ssAnimFrame) { cancelAnimationFrame(ssAnimFrame); ssAnimFrame = null; }
+}
+
+let ssClockLastMove = 0;
+let ssClockX = 300, ssClockY = 200;
+
+function ssAnimate() {
+  if (!ssActive) return;
+  const W = window.innerWidth, H = window.innerHeight;
+
+  // Bounce sprites
+  for (const s of ssSprites) {
+    s.x += s.dx;
+    s.y += s.dy;
+    const sw = s.el.offsetWidth || 80;
+    const sh = s.el.offsetHeight || 80;
+    if (s.x <= 0 || s.x + sw >= W) { s.dx = -s.dx; s.x = Math.max(0, Math.min(s.x, W - sw)); }
+    if (s.y <= 0 || s.y + sh >= H) { s.dy = -s.dy; s.y = Math.max(0, Math.min(s.y, H - sh)); }
+    s.el.style.left = s.x + 'px';
+    s.el.style.top = s.y + 'px';
+    s.el.style.transform = s.dx < 0 ? 'scaleX(-1)' : '';
+  }
+
+  // Clock — move every 5 minutes
+  const now = Date.now();
+  if (now - ssClockLastMove > 300000 || ssClockLastMove === 0) {
+    ssClockX = 80 + Math.random() * (W - 200);
+    ssClockY = 40 + Math.random() * (H - 80);
+    ssClockLastMove = now;
+  }
+  const clockEl = document.getElementById('ss-clock');
+  const d = new Date();
+  let h = d.getHours(), m = d.getMinutes();
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  h = h % 12 || 12;
+  clockEl.textContent = h + ':' + String(m).padStart(2, '0') + ' ' + ampm;
+  clockEl.style.left = ssClockX + 'px';
+  clockEl.style.top = ssClockY + 'px';
+
+  ssAnimFrame = requestAnimationFrame(ssAnimate);
+}
+
+// Track user input for screensaver timeout
+['touchstart', 'mousedown', 'keydown'].forEach(evt => {
+  document.addEventListener(evt, () => {
+    ssLastInput = Date.now();
+    if (ssActive) exitScreensaver();
+  }, {passive: true});
+});
+
+// Check screensaver timeout every 10 seconds
+setInterval(() => {
+  // Only activate on Pi (kiosk mode) or if enabled
+  if (!isPiKiosk) return;
+  if (!ssActive && Date.now() - ssLastInput > SS_TIMEOUT) {
+    enterScreensaver();
+  }
+}, 10000);
+
+// Pi kiosk detection — URL has ?pikey= param
+const urlParams = new URLSearchParams(window.location.search);
+const isPiKiosk = urlParams.has('pikey');
+
+// Pi auth bypass — if pikey matches, skip passkey auth
+async function checkPiAuth() {
+  const pikey = urlParams.get('pikey');
+  if (!pikey) return false;
+  try {
+    const r = await fetch(API_BASE + '/api/state', {headers: {'X-Api-Key': pikey}});
+    if (r.ok) {
+      // Override fetch to always include the API key
+      const _origFetchPi = window.fetch;
+      window.fetch = function(url, opts) {
+        opts = opts || {};
+        if (typeof url === 'string' && url.startsWith(API_BASE)) {
+          opts.headers = opts.headers || {};
+          if (opts.headers instanceof Headers) {
+            opts.headers.set('X-Api-Key', pikey);
+          } else {
+            opts.headers['X-Api-Key'] = pikey;
+          }
+        }
+        return _origFetchPi.call(this, url, opts);
+      };
+      return true;
+    }
+  } catch(e) {}
+  return false;
+}
+
+// Initial load — Pi kiosk bypasses passkey auth
+(async () => {
+  if (isPiKiosk) {
+    const ok = await checkPiAuth();
+    if (ok) {
+      await pollState();
+      updateCalc();
+      return;
+    }
+  }
+  await checkAuth();
+  await pollState();
   const hash = location.hash.replace('#', '');
   if (hash && document.getElementById(hash + '-screen')) {
     showScreen(hash);
   }
-});
-updateCalc();
+  updateCalc();
+})();
 </script>
 </body>
 </html>
