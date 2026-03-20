@@ -12,8 +12,7 @@ self.addEventListener('push', function(event) {
       body: data.body || '',
       icon: data.icon || undefined,
       badge: data.badge || undefined,
-      tag: data.tag || 'formula-helper',
-      renotify: true,
+      tag: (data.tag || 'formula-helper') + '-' + Date.now(),
     })
   );
 });

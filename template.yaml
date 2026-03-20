@@ -123,6 +123,12 @@ Resources:
             Path: /api/push/subscribe
             Method: POST
             ApiId: !Ref FormulaApi
+        PushTest:
+          Type: HttpApi
+          Properties:
+            Path: /api/push/test
+            Method: POST
+            ApiId: !Ref FormulaApi
         PushUnsubscribe:
           Type: HttpApi
           Properties:

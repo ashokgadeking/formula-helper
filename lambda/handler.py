@@ -160,52 +160,22 @@ def _log_entry_to_api(item):
     }
 
 
-def _send_push_to_all(title, body, tag="formula-helper"):
-    """Send web push notification to all subscribed devices."""
-    from pywebpush import webpush, WebPushException
-
-    if not VAPID_PRIVATE_KEY:
-        return
-
-    # Get all push subscriptions
-    resp = table.query(
-        KeyConditionExpression=Key("PK").eq("PUSH") & Key("SK").begins_with("SUB#"),
-    )
-    subs = resp.get("Items", [])
-
-    payload = json.dumps({"title": title, "body": body, "tag": tag})
-
+def _send_ntfy(msg, title="Bottle Expired", mixed_at=""):
+    """Send push notification via ntfy.sh."""
     import logging
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
-    logger.info(f"Sending push to {len(subs)} subscribers: {title}")
-
-    for sub in subs:
-        try:
-            sub_info = json.loads(sub.get("subscription", "{}"))
-            webpush(
-                subscription_info=sub_info,
-                data=payload,
-                vapid_private_key=VAPID_PRIVATE_KEY,
-                vapid_claims={"sub": VAPID_CLAIMS_EMAIL},
-            )
-            logger.info(f"Push sent to {sub.get('user_name', 'unknown')}")
-        except WebPushException as e:
-            logger.error(f"WebPushException for {sub.get('user_name', 'unknown')}: {e}")
-            # 410 Gone = subscription expired, remove it
-            if "410" in str(e) or "404" in str(e):
-                table.delete_item(Key={"PK": "PUSH", "SK": sub["SK"]})
-        except Exception as e:
-            logger.error(f"Push error for {sub.get('user_name', 'unknown')}: {e}")
-
-
-def _send_ntfy(msg, title="Bottle Expired", mixed_at=""):
-    """Send notification via both web push and ntfy (fallback)."""
-    ntfy_title = f"Bottle Expired" if mixed_at else title
-    push_body = f"Mixed at {mixed_at} — discard the milk!" if mixed_at else msg
-    # Web push to all subscribed devices
-    _send_push_to_all(ntfy_title, push_body)
-    # ntfy disabled — using web push only
+    ntfy_title = f"Bottle Expired - mixed at {mixed_at}" if mixed_at else title
+    try:
+        req = urllib.request.Request(
+            f"https://ntfy.sh/{NTFY_TOPIC}",
+            data=msg.encode(),
+            headers={"Title": ntfy_title, "Priority": "high", "Tags": "baby_bottle"},
+        )
+        resp = urllib.request.urlopen(req, timeout=10)
+        logger.info(f"ntfy sent: {resp.status} — {ntfy_title}")
+    except Exception as e:
+        logger.error(f"ntfy failed: {type(e).__name__}: {e}")
 
 
 def _check_expiry_and_notify(timer_state):
@@ -229,7 +199,7 @@ def _check_expiry_and_notify(timer_state):
                 ExpressionAttributeValues={":true": True, ":false": False},
             )
             _send_ntfy(
-                "Formula has expired — discard the milk!",
+                "Formula has expired - discard the milk!",
                 mixed_at=timer_state["mixed_at_str"],
             )
             timer_state["ntfy_sent"] = True
@@ -347,7 +317,7 @@ def _check_weekly_notification(entries):
 
     msg = "\n".join(lines)
     try:
-        _send_push_to_all("Weekly Summary", msg, tag="weekly-summary")
+        _send_ntfy(msg, title="Weekly Summary")
         table.put_item(Item={
             "PK": "STATE",
             "SK": "WEEKLY_NTFY",
@@ -791,7 +761,6 @@ AUTH_ROUTES = {
     "POST /api/auth/register-verify": auth_register_verify,
     "POST /api/auth/login-options": auth_login_options,
     "POST /api/auth/login-verify": auth_login_verify,
-    "GET /api/push/vapid-key": push_vapid_key,
 }
 
 # Protected routes (session required)
@@ -802,8 +771,6 @@ PROTECTED_ROUTES = {
     "DELETE /api/log/{sk}": delete_log,
     "POST /api/reset-timer": post_reset_timer,
     "POST /api/settings": post_settings,
-    "POST /api/push/subscribe": push_subscribe,
-    "POST /api/push/unsubscribe": push_unsubscribe,
 }
 
 

@@ -373,12 +373,6 @@ button:active{transform:scale(.96);filter:brightness(.85)}
       </div>
     </div>
     <div>
-      <div class="setting-label">NOTIFICATIONS</div>
-      <div class="setting-row">
-        <button id="notif-btn" style="padding:12px 28px;border-radius:var(--radius-sm);font-size:.85rem;font-weight:600;background:var(--blue-bg);color:var(--blue);border:1px solid var(--blue-border)" onclick="toggleNotifications()">Enable</button>
-      </div>
-    </div>
-    <div>
       <div class="setting-label">PASSKEYS</div>
       <div class="setting-row" style="gap:10px">
         <input class="auth-name-input" id="settings-device-name" type="text" placeholder="Name" autocomplete="off" style="width:140px">
@@ -1011,7 +1005,6 @@ async function checkAuth() {
   if (authState.authenticated) {
     pollState();
     updateCalc();
-    initPush();
     return;
   }
 
@@ -1254,73 +1247,6 @@ window.fetch = function(url, opts) {
   }
   return _origFetch.call(this, url, opts);
 };
-
-// ── Push Notifications ──────────────────────────
-let pushSubscription = null;
-
-async function initPush() {
-  const btn = document.getElementById('notif-btn');
-  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-    btn.textContent = 'Not Supported';
-    btn.disabled = true;
-    return;
-  }
-  try {
-    const reg = await navigator.serviceWorker.register('/sw.js');
-    pushSubscription = await reg.pushManager.getSubscription();
-    updateNotifBtn();
-  } catch(e) {}
-}
-
-function updateNotifBtn() {
-  const btn = document.getElementById('notif-btn');
-  if (pushSubscription) {
-    btn.textContent = 'Enabled';
-    btn.style.background = 'var(--green-bg)';
-    btn.style.color = 'var(--green)';
-    btn.style.borderColor = 'var(--green-border)';
-  } else {
-    btn.textContent = 'Enable';
-    btn.style.background = 'var(--blue-bg)';
-    btn.style.color = 'var(--blue)';
-    btn.style.borderColor = 'var(--blue-border)';
-  }
-}
-
-async function toggleNotifications() {
-  if (pushSubscription) {
-    // Unsubscribe
-    const endpoint = pushSubscription.endpoint;
-    await pushSubscription.unsubscribe();
-    pushSubscription = null;
-    await fetch(API_BASE + '/api/push/unsubscribe', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({endpoint: endpoint}),
-    });
-    updateNotifBtn();
-  } else {
-    // Subscribe
-    try {
-      const r = await fetch(API_BASE + '/api/push/vapid-key');
-      const {publicKey} = await r.json();
-      const reg = await navigator.serviceWorker.ready;
-      pushSubscription = await reg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: base64urlToBuffer(publicKey),
-      });
-      await fetch(API_BASE + '/api/push/subscribe', {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-          subscription: pushSubscription.toJSON(),
-          user_name: authState.user_name || '',
-        }),
-      });
-      updateNotifBtn();
-    } catch(e) {
-      alert('Could not enable notifications: ' + e.message);
-    }
-  }
-}
 
 // Initial load — check auth first, then restore screen from hash
 checkAuth().then(() => {
