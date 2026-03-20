@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/icon-180.png">
 <title>Formula Helper</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -99,7 +101,7 @@ button:active{transform:scale(.96);filter:brightness(.85)}
   align-items:center;gap:14px;position:relative;border:1px solid var(--border);
   transition:background .15s}
 .log-card:active{background:var(--card2)}
-.log-num{font-size:.65rem;color:var(--dim2);min-width:20px;text-align:center;
+.log-num{font-size:.65rem;color:var(--dim2);width:40px;flex-shrink:0;text-align:center;
   font-weight:600;letter-spacing:.5px}
 .log-info{flex:1;min-width:0}
 .log-text{font-size:.9rem;color:var(--white);font-weight:500}
@@ -199,9 +201,42 @@ button:active{transform:scale(.96);filter:brightness(.85)}
 /* ── Backup indicator ──────────────────────────── */
 .backup-indicator{position:absolute;right:14px;top:50%;transform:translateY(-50%);
   font-size:.55rem;letter-spacing:.3px;line-height:1.3;text-align:center;font-weight:500}
+
+/* ── Auth overlay ──────────────────────────────── */
+.auth-overlay{position:fixed;inset:0;background:var(--bg);z-index:200;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px}
+.auth-overlay.hidden{display:none}
+.auth-icon{font-size:3rem;opacity:.3}
+.auth-title{font-size:1.3rem;font-weight:700;letter-spacing:-.3px}
+.auth-sub{font-size:.8rem;color:var(--dim);text-align:center;max-width:260px;line-height:1.5}
+.auth-btn{padding:16px 40px;border-radius:var(--radius);font-size:.95rem;font-weight:600;
+  background:var(--blue-bg);color:var(--blue);border:1px solid var(--blue-border);
+  cursor:pointer}
+.auth-btn:active{transform:scale(.96)}
+.auth-error{font-size:.75rem;color:var(--red);text-align:center;max-width:260px}
+.auth-name-input{background:var(--card);border:1px solid var(--border-light);border-radius:var(--radius-sm);
+  padding:14px 16px;font-size:.95rem;color:var(--white);width:220px;outline:none;
+  font-family:var(--font);text-align:center}
+.auth-name-input:focus{border-color:var(--blue)}
+.auth-name-input::placeholder{color:var(--dim2)}
 </style>
 </head>
 <body>
+
+<!-- ══ AUTH OVERLAY ══════════════════════════════ -->
+<div class="auth-overlay hidden" id="auth-overlay">
+  <div class="auth-icon">🍼</div>
+  <div class="auth-title">Formula Helper</div>
+  <div class="auth-sub" id="auth-sub">Checking authentication...</div>
+  <input class="auth-name-input hidden" id="auth-name" type="text" placeholder="Your name" autocomplete="off">
+  <button class="auth-btn hidden" id="auth-btn" onclick="handleAuth()">Sign In</button>
+  <div class="hidden" id="auth-add-device" style="display:none;flex-direction:column;align-items:center;gap:12px;margin-top:8px">
+    <div style="font-size:.7rem;color:var(--dim);letter-spacing:1px">OR ADD A NEW DEVICE</div>
+    <input class="auth-name-input" id="auth-add-name" type="text" placeholder="Your name" autocomplete="off">
+    <button class="auth-btn" onclick="addDeviceFromLogin()" style="background:var(--green-bg);color:var(--green);border-color:var(--green-border);font-size:.85rem;padding:12px 30px">Set Up Passkey</button>
+  </div>
+  <div class="auth-error hidden" id="auth-error"></div>
+</div>
 
 <!-- ══ MAIN ══════════════════════════════════════ -->
 <div id="main-screen" class="screen active">
@@ -273,7 +308,19 @@ button:active{transform:scale(.96);filter:brightness(.85)}
 <div class="modal-overlay" id="modal-overlay" onclick="if(event.target===this)closeModal()">
   <div class="modal">
     <div class="modal-title" id="modal-title">Edit</div>
-    <input id="modal-input" type="text" autocomplete="off">
+    <div id="modal-single-field">
+      <input id="modal-input" type="text" autocomplete="off">
+    </div>
+    <div id="modal-edit-fields" style="display:none;gap:12px;flex-direction:column">
+      <div style="display:flex;gap:10px;align-items:center">
+        <div style="font-size:.7rem;color:var(--dim);width:35px;letter-spacing:.5px">ML</div>
+        <input id="modal-ml" type="number" inputmode="numeric" autocomplete="off" style="flex:1">
+      </div>
+      <div style="display:flex;gap:10px;align-items:center">
+        <div style="font-size:.7rem;color:var(--dim);width:35px;letter-spacing:.5px">TIME</div>
+        <input id="modal-time" type="time" autocomplete="off" style="flex:1">
+      </div>
+    </div>
     <div class="modal-btns">
       <button class="modal-cancel" onclick="closeModal()">Cancel</button>
       <button class="modal-save" onclick="saveModal()">Save</button>
@@ -325,6 +372,19 @@ button:active{transform:scale(.96);filter:brightness(.85)}
         <button class="setting-btn setting-plus" onclick="adjSS(1)">+</button>
       </div>
     </div>
+    <div>
+      <div class="setting-label">NOTIFICATIONS</div>
+      <div class="setting-row">
+        <button id="notif-btn" style="padding:12px 28px;border-radius:var(--radius-sm);font-size:.85rem;font-weight:600;background:var(--blue-bg);color:var(--blue);border:1px solid var(--blue-border)" onclick="toggleNotifications()">Enable</button>
+      </div>
+    </div>
+    <div>
+      <div class="setting-label">PASSKEYS</div>
+      <div class="setting-row" style="gap:10px">
+        <input class="auth-name-input" id="settings-device-name" type="text" placeholder="Name" autocomplete="off" style="width:140px">
+        <button style="padding:12px 28px;border-radius:var(--radius-sm);font-size:.85rem;font-weight:600;background:var(--green-bg);color:var(--green);border:1px solid var(--green-border)" onclick="addDeviceFromSettings()">Add</button>
+      </div>
+    </div>
   </div>
   <div class="bottom-bar split">
     <button onclick="showScreen('main')">Back</button>
@@ -334,6 +394,7 @@ button:active{transform:scale(.96);filter:brightness(.85)}
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 <script>
+const API_BASE = '';
 let state = {};
 let calcWater = 60;
 const POWDER_PER_60 = 8.3;
@@ -343,8 +404,9 @@ let trendChart = null;
 function showScreen(name) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.getElementById(name + '-screen').classList.add('active');
+  location.hash = name === 'main' ? '' : name;
   if (name === 'main') pollState();
-  if (name === 'log') { pollState().then(() => { const dates=getLogDates(); logViewDate=dates.length?dates[dates.length-1]:localDateStr(new Date()); updateLog(); }); }
+  if (name === 'log') { const dates=getLogDates(); logViewDate=dates.length?dates[dates.length-1]:localDateStr(new Date()); updateLog(); }
   if (name === 'trends') { pollState().then(() => updateTrends()); }
 }
 
@@ -448,7 +510,8 @@ function updateSamples() {
 }
 
 let modalMode = '';  // 'edit' or 'leftover'
-let modalIdx = -1;
+let modalSk = '';
+let modalEntry = null;
 let logViewDate = ''; // set properly in showScreen('log')
 
 function entryText(e) { return typeof e === 'string' ? e : (e.text || ''); }
@@ -497,18 +560,6 @@ function updateLog() {
   const list = document.getElementById('log-list');
   list.innerHTML = '';
 
-  // Backup status
-  const bsEl = document.getElementById('backup-status');
-  if (state.backup_status && state.backup_status.time) {
-    if (state.backup_status.ok) {
-      bsEl.innerHTML = '<div style="color:var(--green);text-align:center;line-height:1.2">S3 \u2713<br><span style="font-size:.5rem;opacity:.7">' + state.backup_status.time + '</span></div>';
-    } else {
-      bsEl.innerHTML = '<div style="color:var(--red);text-align:center;line-height:1.2">S3 \u2717<br><span style="font-size:.5rem;opacity:.7">' + state.backup_status.time + '</span></div>';
-    }
-  } else {
-    bsEl.textContent = '';
-  }
-
   // Date label
   document.getElementById('log-date-label').textContent = formatDateLabel(logViewDate);
 
@@ -529,10 +580,10 @@ function updateLog() {
 
   // Filter by date
   const filtered = [];
-  state.mix_log.forEach((e, i) => {
+  state.mix_log.forEach((e) => {
     const d = entryDate(e);
-    if (logViewDate && d === logViewDate) filtered.push({e, i});
-    else if (!logViewDate && !d) filtered.push({e, i});
+    if (logViewDate && d === logViewDate) filtered.push(e);
+    else if (!logViewDate && !d) filtered.push(e);
   });
 
   document.getElementById('log-count').textContent =
@@ -545,7 +596,8 @@ function updateLog() {
 
   // Newest first
   for (let fi = filtered.length - 1; fi >= 0; fi--) {
-    const {e, i} = filtered[fi];
+    const e = filtered[fi];
+    const sk = e.sk || '';
     const txt = entryText(e);
     const lo = entryLeftover(e);
     const card = document.createElement('div');
@@ -553,7 +605,8 @@ function updateLog() {
 
     const num = document.createElement('div');
     num.className = 'log-num';
-    num.textContent = i + 1;
+    const byColor = {'Ashok':'rgba(90,170,255,.5)','Anu':'rgba(255,130,170,.5)','Pi':'rgba(68,210,110,.5)'}[e.created_by] || 'rgba(110,110,135,.5)';
+    num.innerHTML = (fi + 1) + (e.created_by ? '<div style="font-size:.55rem;margin-top:2px;color:' + byColor + '">' + e.created_by + '</div>' : '');
 
     const info = document.createElement('div');
     info.className = 'log-info';
@@ -566,12 +619,13 @@ function updateLog() {
     loDiv.textContent = lo ? 'leftover: ' + lo : 'no leftover recorded';
     info.appendChild(loDiv);
 
+    const eskQ = sk.replace(/'/g, "\\'");
     const actions = document.createElement('div');
     actions.className = 'log-actions';
     actions.innerHTML =
-      '<button class="log-act leftover-btn" onclick="openLeftover('+i+')" title="Add leftover">&#9874;</button>' +
-      '<button class="log-act edit-btn" onclick="openEdit('+i+')" title="Edit">&#9998;</button>' +
-      '<button class="log-act del-btn" onclick="deleteEntry('+i+')" title="Delete">&#10005;</button>';
+      '<button class="log-act leftover-btn" onclick="openLeftover(\''+eskQ+'\')" title="Add leftover">&#9874;</button>' +
+      '<button class="log-act edit-btn" onclick="openEdit(\''+eskQ+'\')" title="Edit">&#9998;</button>' +
+      '<button class="log-act del-btn" onclick="deleteEntry(\''+eskQ+'\')" title="Delete">&#10005;</button>';
 
     card.appendChild(num);
     card.appendChild(info);
@@ -580,21 +634,41 @@ function updateLog() {
   }
 }
 
-function openEdit(idx) {
-  modalMode = 'edit';
-  modalIdx = idx;
-  document.getElementById('modal-title').textContent = 'Edit Entry';
-  document.getElementById('modal-input').value = entryText(state.mix_log[idx]);
-  document.getElementById('modal-input').placeholder = 'e.g. 60ml @ 02:30 PM';
-  document.getElementById('modal-overlay').classList.add('active');
-  document.getElementById('modal-input').focus();
+function _findBySk(sk) {
+  return state.mix_log ? state.mix_log.find(e => e.sk === sk) : null;
 }
 
-function openLeftover(idx) {
+function _parseTime12to24(dateStr) {
+  // "2026-03-19 02:30 PM" → "14:30"
+  const m = dateStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+  if (!m) return '';
+  let h = parseInt(m[1]);
+  if (m[3].toUpperCase() === 'PM' && h !== 12) h += 12;
+  if (m[3].toUpperCase() === 'AM' && h === 12) h = 0;
+  return String(h).padStart(2,'0') + ':' + m[2];
+}
+
+function openEdit(sk) {
+  modalMode = 'edit';
+  modalSk = sk;
+  const entry = _findBySk(sk);
+  document.getElementById('modal-title').textContent = 'Edit Entry';
+  document.getElementById('modal-single-field').style.display = 'none';
+  document.getElementById('modal-edit-fields').style.display = 'flex';
+  document.getElementById('modal-ml').value = entry ? entry.ml || '' : '';
+  document.getElementById('modal-time').value = entry ? _parseTime12to24(entry.date || '') : '';
+  document.getElementById('modal-overlay').classList.add('active');
+  document.getElementById('modal-ml').focus();
+}
+
+function openLeftover(sk) {
   modalMode = 'leftover';
-  modalIdx = idx;
+  modalSk = sk;
+  const entry = _findBySk(sk);
   document.getElementById('modal-title').textContent = 'Add Leftover';
-  document.getElementById('modal-input').value = entryLeftover(state.mix_log[idx]);
+  document.getElementById('modal-single-field').style.display = '';
+  document.getElementById('modal-edit-fields').style.display = 'none';
+  document.getElementById('modal-input').value = entry ? entryLeftover(entry) : '';
   document.getElementById('modal-input').placeholder = 'e.g. 20ml remaining';
   document.getElementById('modal-overlay').classList.add('active');
   document.getElementById('modal-input').focus();
@@ -605,21 +679,47 @@ function closeModal() {
 }
 
 async function saveModal() {
-  const val = document.getElementById('modal-input').value.trim();
-  const body = modalMode === 'edit' ? {text: val} : {leftover: val};
-  await fetch('/api/log/' + modalIdx, {
+  let body;
+  if (modalMode === 'edit') {
+    const ml = parseInt(document.getElementById('modal-ml').value) || 0;
+    const time24 = document.getElementById('modal-time').value; // "14:30"
+    // Convert 24h to 12h format
+    let timeStr = '';
+    if (time24) {
+      const [h, m] = time24.split(':').map(Number);
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+      timeStr = String(h12).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ' ' + ampm;
+    }
+    const entry = _findBySk(modalSk);
+    // Reconstruct date: keep the date part, update the time part
+    let newDate = entry ? entry.date : '';
+    if (timeStr && newDate) {
+      newDate = newDate.split(' ')[0] + ' ' + timeStr;
+    }
+    body = {
+      ml: ml,
+      text: ml + 'ml @ ' + timeStr,
+      date: newDate,
+    };
+  } else {
+    body = {leftover: document.getElementById('modal-input').value.trim()};
+  }
+  await fetch(API_BASE + '/api/log/' + encodeURIComponent(modalSk), {
     method: 'PUT',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(body)
   });
   closeModal();
   await pollState();
+  updateLog();
 }
 
-async function deleteEntry(idx) {
+async function deleteEntry(sk) {
   if (!confirm('Delete this entry?')) return;
-  await fetch('/api/log/' + idx, {method: 'DELETE'});
+  await fetch(API_BASE + '/api/log/' + encodeURIComponent(sk), {method: 'DELETE'});
   await pollState();
+  updateLog();
 }
 
 function updateSettings() {
@@ -656,7 +756,7 @@ function calcAdjust(delta) {
 }
 
 async function calcStart() {
-  await fetch('/api/start', {
+  await fetch(API_BASE + '/api/start', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ml: calcWater})
@@ -666,7 +766,7 @@ async function calcStart() {
 }
 
 async function startTimer(ml) {
-  await fetch('/api/start', {
+  await fetch(API_BASE + '/api/start', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ml: ml})
@@ -682,7 +782,7 @@ async function adjTimer(dir) {
   } else {
     next = cs <= 60 ? Math.max(cs - 10, 10) : Math.max(cs - 300, 60);
   }
-  await fetch('/api/settings', {
+  await fetch(API_BASE + '/api/settings', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({countdown_secs: next})
@@ -692,7 +792,7 @@ async function adjTimer(dir) {
 }
 
 async function resetTimer() {
-  await fetch('/api/reset-timer', {method: 'POST'});
+  await fetch(API_BASE + '/api/reset-timer', {method: 'POST'});
   await pollState();
   showScreen('main');
 }
@@ -704,7 +804,7 @@ function closeApp() {
 async function adjSS(dir) {
   const ss = state.settings.ss_timeout_min || 2;
   const next = dir > 0 ? Math.min(ss + 1, 30) : Math.max(ss - 1, 1);
-  await fetch('/api/settings', {
+  await fetch(API_BASE + '/api/settings', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ss_timeout_min: next})
@@ -846,11 +946,18 @@ function formatChartDateLabel(isoDate) {
 
 async function pollState() {
   try {
-    const r = await fetch('/api/state');
+    const r = await fetch(API_BASE + '/api/state');
+    if (!r.ok) {
+      if (r.status === 401) {
+        // Session expired — show auth overlay
+        document.getElementById('auth-overlay').classList.remove('hidden');
+        checkAuth();
+      }
+      return;
+    }
     state = await r.json();
     updateMain();
     updateSamples();
-    updateLog();
     updateSettings();
   } catch(e) {}
 }
@@ -867,8 +974,363 @@ setInterval(() => {
 // Poll server every 5 seconds for state sync
 setInterval(pollState, 5000);
 
-// Initial load
-pollState();
+// ── Auth ─────────────────────────────────────────
+let authState = {registered: false, authenticated: false};
+
+function bufferToBase64url(buf) {
+  const bytes = new Uint8Array(buf);
+  let s = '';
+  bytes.forEach(b => s += String.fromCharCode(b));
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function base64urlToBuffer(b64) {
+  const pad = b64.length % 4;
+  if (pad) b64 += '='.repeat(4 - pad);
+  const s = atob(b64.replace(/-/g, '+').replace(/_/g, '/'));
+  const buf = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) buf[i] = s.charCodeAt(i);
+  return buf.buffer;
+}
+
+async function checkAuth() {
+  const overlay = document.getElementById('auth-overlay');
+  const sub = document.getElementById('auth-sub');
+  const btn = document.getElementById('auth-btn');
+  const err = document.getElementById('auth-error');
+
+  try {
+    const r = await fetch(API_BASE + '/api/auth/status', {credentials: 'include'});
+    authState = await r.json();
+  } catch(e) {
+    overlay.classList.remove('hidden');
+    sub.textContent = 'Cannot reach server';
+    return;
+  }
+
+  if (authState.authenticated) {
+    pollState();
+    updateCalc();
+    initPush();
+    return;
+  }
+
+  overlay.classList.remove('hidden');
+  if (!authState.registered) {
+    sub.textContent = 'Set up Face ID to secure your app';
+    btn.textContent = 'Set Up Passkey';
+    btn.classList.remove('hidden');
+    document.getElementById('auth-name').classList.remove('hidden');
+  } else {
+    sub.textContent = 'Authenticate to continue';
+    btn.textContent = 'Sign In';
+    btn.classList.remove('hidden');
+    document.getElementById('auth-add-device').style.display = 'flex';
+  }
+}
+
+async function handleAuth() {
+  const btn = document.getElementById('auth-btn');
+  const err = document.getElementById('auth-error');
+  err.classList.add('hidden');
+  btn.disabled = true;
+  btn.textContent = 'Please wait...';
+
+  try {
+    if (!authState.registered) {
+      await doRegister();
+    } else {
+      await doLogin();
+    }
+  } catch(e) {
+    err.textContent = e.message || 'Authentication failed';
+    err.classList.remove('hidden');
+    btn.disabled = false;
+    btn.textContent = authState.registered ? 'Sign In' : 'Set Up Passkey';
+  }
+}
+
+async function doRegister() {
+  const userName = document.getElementById('auth-name').value.trim();
+  if (!userName) {
+    throw new Error('Please enter your name');
+  }
+
+  const r = await fetch(API_BASE + '/api/auth/register-options', {method: 'POST', credentials: 'include'});
+  const options = await r.json();
+
+  const pubKeyOptions = {
+    challenge: base64urlToBuffer(options.challenge),
+    rp: options.rp,
+    user: {
+      ...options.user,
+      id: base64urlToBuffer(options.user.id),
+    },
+    pubKeyCredParams: options.pubKeyCredParams,
+    timeout: options.timeout || 60000,
+    attestation: options.attestation || 'none',
+    authenticatorSelection: options.authenticatorSelection,
+  };
+  if (options.excludeCredentials && options.excludeCredentials.length) {
+    pubKeyOptions.excludeCredentials = options.excludeCredentials.map(c => ({
+      type: c.type, id: base64urlToBuffer(c.id),
+    }));
+  }
+
+  const credential = await navigator.credentials.create({publicKey: pubKeyOptions});
+
+  const body = {
+    id: credential.id,
+    rawId: bufferToBase64url(credential.rawId),
+    type: credential.type,
+    user_name: userName,
+    response: {
+      attestationObject: bufferToBase64url(credential.response.attestationObject),
+      clientDataJSON: bufferToBase64url(credential.response.clientDataJSON),
+    },
+  };
+  if (credential.response.getTransports) {
+    body.response.transports = credential.response.getTransports();
+  }
+
+  const vr = await fetch(API_BASE + '/api/auth/register-verify', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+    credentials: 'include',
+  });
+  const vd = await vr.json();
+  if (!vr.ok) throw new Error(vd.error || 'Registration failed');
+
+  document.getElementById('auth-overlay').classList.add('hidden');
+  pollState();
+  updateCalc();
+}
+
+async function doLogin() {
+  const r = await fetch(API_BASE + '/api/auth/login-options', {method: 'POST', credentials: 'include'});
+  const options = await r.json();
+
+  options.challenge = base64urlToBuffer(options.challenge);
+  if (options.allowCredentials) {
+    options.allowCredentials = options.allowCredentials.map(c => ({
+      ...c, id: base64urlToBuffer(c.id)
+    }));
+  }
+
+  const assertion = await navigator.credentials.get({publicKey: options});
+
+  const body = {
+    id: assertion.id,
+    rawId: bufferToBase64url(assertion.rawId),
+    type: assertion.type,
+    response: {
+      authenticatorData: bufferToBase64url(assertion.response.authenticatorData),
+      clientDataJSON: bufferToBase64url(assertion.response.clientDataJSON),
+      signature: bufferToBase64url(assertion.response.signature),
+    },
+  };
+  if (assertion.response.userHandle) {
+    body.response.userHandle = bufferToBase64url(assertion.response.userHandle);
+  }
+
+  const vr = await fetch(API_BASE + '/api/auth/login-verify', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+    credentials: 'include',
+  });
+  const vd = await vr.json();
+  if (!vr.ok) throw new Error(vd.error || 'Login failed');
+
+  document.getElementById('auth-overlay').classList.add('hidden');
+  pollState();
+  updateCalc();
+}
+
+async function addDeviceFromLogin() {
+  const err = document.getElementById('auth-error');
+  err.classList.add('hidden');
+  const name = document.getElementById('auth-add-name').value.trim();
+  if (!name) {
+    err.textContent = 'Please enter your name';
+    err.classList.remove('hidden');
+    return;
+  }
+  try {
+    const r = await fetch(API_BASE + '/api/auth/register-options', {method: 'POST', credentials: 'include'});
+    const options = await r.json();
+
+    // Convert base64url fields to ArrayBuffer for WebAuthn API
+    const pubKeyOptions = {
+      challenge: base64urlToBuffer(options.challenge),
+      rp: options.rp,
+      user: {
+        ...options.user,
+        id: base64urlToBuffer(options.user.id),
+      },
+      pubKeyCredParams: options.pubKeyCredParams,
+      timeout: options.timeout || 60000,
+      attestation: options.attestation || 'none',
+      authenticatorSelection: options.authenticatorSelection,
+    };
+    if (options.excludeCredentials && options.excludeCredentials.length) {
+      pubKeyOptions.excludeCredentials = options.excludeCredentials.map(c => ({
+        type: c.type, id: base64urlToBuffer(c.id),
+      }));
+    }
+
+    const credential = await navigator.credentials.create({publicKey: pubKeyOptions});
+
+    const body = {
+      id: credential.id,
+      rawId: bufferToBase64url(credential.rawId),
+      type: credential.type,
+      user_name: name,
+      response: {
+        attestationObject: bufferToBase64url(credential.response.attestationObject),
+        clientDataJSON: bufferToBase64url(credential.response.clientDataJSON),
+      },
+    };
+    if (credential.response.getTransports) {
+      body.response.transports = credential.response.getTransports();
+    }
+
+    const vr = await fetch(API_BASE + '/api/auth/register-verify', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body), credentials: 'include',
+    });
+    if (vr.ok) {
+      document.getElementById('auth-overlay').classList.add('hidden');
+      pollState(); updateCalc();
+    } else {
+      const d = await vr.json();
+      throw new Error(d.error || 'Registration failed');
+    }
+  } catch(e) {
+    err.textContent = String(e.message || e);
+    err.classList.remove('hidden');
+  }
+}
+
+async function addDeviceFromSettings() {
+  const name = document.getElementById('settings-device-name').value.trim();
+  if (!name) { alert('Enter a name first'); return; }
+  try {
+    const r = await fetch(API_BASE + '/api/auth/register-options', {method: 'POST', credentials: 'include'});
+    const options = await r.json();
+    options.challenge = base64urlToBuffer(options.challenge);
+    options.user.id = base64urlToBuffer(options.user.id);
+    if (options.excludeCredentials) {
+      options.excludeCredentials = options.excludeCredentials.map(c => ({...c, id: base64urlToBuffer(c.id)}));
+    }
+    const credential = await navigator.credentials.create({publicKey: options});
+    const body = {
+      id: credential.id,
+      rawId: bufferToBase64url(credential.rawId),
+      type: credential.type,
+      user_name: name,
+      response: {
+        attestationObject: bufferToBase64url(credential.response.attestationObject),
+        clientDataJSON: bufferToBase64url(credential.response.clientDataJSON),
+      },
+    };
+    if (credential.response.getTransports) body.response.transports = credential.response.getTransports();
+    const vr = await fetch(API_BASE + '/api/auth/register-verify', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body), credentials: 'include',
+    });
+    if (vr.ok) alert('Passkey added for ' + name + '!');
+    else { const d = await vr.json(); alert('Failed: ' + (d.error || 'Unknown error')); }
+  } catch(e) { alert('Failed: ' + e.message); }
+}
+
+// Add credentials:include to all fetch calls for cookie handling
+const _origFetch = window.fetch;
+window.fetch = function(url, opts) {
+  opts = opts || {};
+  if (typeof url === 'string' && url.startsWith(API_BASE)) {
+    opts.credentials = 'include';
+  }
+  return _origFetch.call(this, url, opts);
+};
+
+// ── Push Notifications ──────────────────────────
+let pushSubscription = null;
+
+async function initPush() {
+  const btn = document.getElementById('notif-btn');
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    btn.textContent = 'Not Supported';
+    btn.disabled = true;
+    return;
+  }
+  try {
+    const reg = await navigator.serviceWorker.register('/sw.js');
+    pushSubscription = await reg.pushManager.getSubscription();
+    updateNotifBtn();
+  } catch(e) {}
+}
+
+function updateNotifBtn() {
+  const btn = document.getElementById('notif-btn');
+  if (pushSubscription) {
+    btn.textContent = 'Enabled';
+    btn.style.background = 'var(--green-bg)';
+    btn.style.color = 'var(--green)';
+    btn.style.borderColor = 'var(--green-border)';
+  } else {
+    btn.textContent = 'Enable';
+    btn.style.background = 'var(--blue-bg)';
+    btn.style.color = 'var(--blue)';
+    btn.style.borderColor = 'var(--blue-border)';
+  }
+}
+
+async function toggleNotifications() {
+  if (pushSubscription) {
+    // Unsubscribe
+    const endpoint = pushSubscription.endpoint;
+    await pushSubscription.unsubscribe();
+    pushSubscription = null;
+    await fetch(API_BASE + '/api/push/unsubscribe', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({endpoint: endpoint}),
+    });
+    updateNotifBtn();
+  } else {
+    // Subscribe
+    try {
+      const r = await fetch(API_BASE + '/api/push/vapid-key');
+      const {publicKey} = await r.json();
+      const reg = await navigator.serviceWorker.ready;
+      pushSubscription = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: base64urlToBuffer(publicKey),
+      });
+      await fetch(API_BASE + '/api/push/subscribe', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          subscription: pushSubscription.toJSON(),
+          user_name: authState.user_name || '',
+        }),
+      });
+      updateNotifBtn();
+    } catch(e) {
+      alert('Could not enable notifications: ' + e.message);
+    }
+  }
+}
+
+// Initial load — check auth first, then restore screen from hash
+checkAuth().then(() => {
+  return pollState();
+}).then(() => {
+  const hash = location.hash.replace('#', '');
+  if (hash && document.getElementById(hash + '-screen')) {
+    showScreen(hash);
+  }
+});
 updateCalc();
 </script>
 </body>

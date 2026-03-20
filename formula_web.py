@@ -31,6 +31,12 @@ from formula_app import (
 app = Flask(__name__)
 
 
+@app.after_request
+def no_cache(response):
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -111,11 +117,15 @@ def api_log_edit(idx):
 
 @app.route("/api/log/<int:idx>", methods=["DELETE"])
 def api_log_delete(idx):
+    from formula_app import restore_state_from_log
     mix_log = load_log()
     if idx < 0 or idx >= len(mix_log):
         return jsonify(ok=False, error="invalid index"), 400
+    was_latest = (idx == len(mix_log) - 1)
     mix_log.pop(idx)
     save_log(mix_log)
+    if was_latest:
+        restore_state_from_log(mix_log)
     return jsonify(ok=True)
 
 

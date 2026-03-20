@@ -19,9 +19,11 @@ import argparse
 import json
 import time
 import threading
+import urllib.parse
 import urllib.request
 from datetime import datetime
 from enum import Enum, auto
+import api_client
 
 # ── Allow framebuffer rendering on RPi without a desktop ─────────────────────
 if not os.environ.get("DISPLAY") and sys.platform != "darwin":
@@ -267,6 +269,50 @@ def _check_weekly_notification(mix_log: list) -> None:
     threading.Thread(target=_do_check, daemon=True).start()
 
 
+CLOUD_API = "https://d20oyc88hlibbe.cloudfront.net"
+
+
+def _sync_start_to_cloud(ml):
+    """Notify the cloud API when a bottle is started from the Pi."""
+    def _send():
+        try:
+            data = json.dumps({"ml": ml}).encode()
+            req = urllib.request.Request(
+                f"{CLOUD_API}/api/start", data=data,
+                headers={"Content-Type": "application/json"},
+            )
+            urllib.request.urlopen(req, timeout=10)
+        except Exception:
+            pass
+    threading.Thread(target=_send, daemon=True).start()
+
+
+def _sync_delete_to_cloud(entry):
+    """Notify the cloud API when a log entry is deleted from the Pi."""
+    def _send():
+        try:
+            # Find matching entry by date
+            date_str = entry.get("date", "") if isinstance(entry, dict) else ""
+            if not date_str:
+                return
+            req = urllib.request.Request(f"{CLOUD_API}/api/state")
+            resp = urllib.request.urlopen(req, timeout=10)
+            state = json.loads(resp.read())
+            for e in state.get("mix_log", []):
+                if e.get("date") == date_str and e.get("ml") == entry.get("ml"):
+                    sk = e.get("sk", "")
+                    if sk:
+                        dreq = urllib.request.Request(
+                            f"{CLOUD_API}/api/log/{urllib.parse.quote(sk, safe='')}",
+                            method="DELETE",
+                        )
+                        urllib.request.urlopen(dreq, timeout=10)
+                    break
+        except Exception:
+            pass
+    threading.Thread(target=_send, daemon=True).start()
+
+
 def save_log(mix_log: list) -> None:
     try:
         with open(LOG_FILE, "w") as f:
@@ -275,6 +321,41 @@ def save_log(mix_log: list) -> None:
         _check_weekly_notification(mix_log)
     except Exception:
         pass
+
+
+def restore_state_from_log(mix_log: list) -> tuple:
+    """After deleting the latest entry, restore timer state from the new latest entry.
+    Returns (countdown_end, mixed_at_str, mixed_ml, ntfy_sent)."""
+    settings = load_settings()
+    countdown_secs = settings.get("countdown_secs", DEFAULT_COUNTDOWN_MIN * 60)
+
+    if not mix_log:
+        save_state(0.0, "", 0, False)
+        return 0.0, "", 0, False
+
+    # Find the most recent entry (last in list)
+    latest = mix_log[-1]
+    if not isinstance(latest, dict) or not latest.get("date"):
+        save_state(0.0, "", 0, False)
+        return 0.0, "", 0, False
+
+    # Parse the entry's datetime to reconstruct countdown_end
+    try:
+        mixed_dt = datetime.strptime(latest["date"], "%Y-%m-%d %I:%M %p")
+        mixed_at_str = mixed_dt.strftime("%I:%M %p")
+        mixed_ml = latest.get("ml", 0)
+        # Reconstruct when the timer would have ended
+        import calendar
+        mixed_ts = mixed_dt.timestamp()
+        countdown_end = mixed_ts + countdown_secs
+        # Check if already expired
+        expired = time.time() > countdown_end
+        ntfy_sent = expired  # if expired, assume notification was already sent
+        save_state(countdown_end, mixed_at_str, mixed_ml, ntfy_sent)
+        return countdown_end, mixed_at_str, mixed_ml, ntfy_sent
+    except (ValueError, KeyError):
+        save_state(0.0, "", 0, False)
+        return 0.0, "", 0, False
 
 
 class AppMode(Enum):
@@ -295,25 +376,52 @@ XPAD = 20
 HDR_H = 0  # no header
 
 # ── Palette ──────────────────────────────────────────────────────────────────
-C_BG       = ( 13,  13,  20)
-C_CARD     = ( 22,  22,  34)
-C_LINE     = ( 40,  40,  58)
+C_BG       = (  8,   8,  15)
+C_BG2      = ( 14,  14,  26)
+C_CARD     = ( 20,  20,  34)
+C_CARD2    = ( 26,  26,  46)
+C_LINE     = ( 30,  30,  48)
 C_WHITE    = (235, 235, 245)
 C_DIM      = (110, 110, 135)
+C_DIM2     = ( 74,  74,  98)
 C_GREEN    = ( 68, 210, 110)
 C_BLUE     = ( 90, 170, 255)
 C_YELLOW   = (255, 200,  55)
 C_RED      = (255,  75,  75)
-C_BTN      = ( 38,  38,  58)
-C_BTN_PR   = ( 25,  25,  40)
+C_PURPLE   = (180, 120, 255)
+C_BTN      = ( 30,  30,  50)
+C_BTN_PR   = ( 20,  20,  36)
+# Tinted button backgrounds (matching web UI)
+C_GREEN_BG = ( 18,  42,  26)
+C_GREEN_PR = ( 12,  30,  18)
+C_BLUE_BG  = ( 16,  32,  52)
+C_BLUE_PR  = ( 10,  22,  38)
+C_YELLOW_BG= ( 42,  36,  16)
+C_YELLOW_PR= ( 30,  26,  10)
+C_RED_BG   = ( 42,  16,  16)
+C_RED_PR   = ( 30,  10,  10)
+C_PURPLE_BG= ( 34,  20,  42)
+C_PURPLE_PR= ( 24,  12,  30)
+C_BORDER   = ( 24,  24,  40)
 
 # ── Font loader ──────────────────────────────────────────────────────────────
 _font_cache: dict = {}
+_OUTFIT_REGULAR = os.path.expanduser("~/.local/share/fonts/Outfit-Regular.ttf")
+_OUTFIT_BOLD    = os.path.expanduser("~/.local/share/fonts/Outfit-Bold.ttf")
 
 def font(size: int, bold: bool = False) -> pygame.font.Font:
     key = (size, bold)
     if key not in _font_cache:
-        for name in ["dejavusans", "freesans", "liberationsans", "arial", None]:
+        # Try Outfit font file first
+        outfit_path = _OUTFIT_BOLD if bold else _OUTFIT_REGULAR
+        if os.path.exists(outfit_path):
+            try:
+                _font_cache[key] = pygame.font.Font(outfit_path, size)
+                return _font_cache[key]
+            except Exception:
+                pass
+        # Fallback to system fonts
+        for name in ["outfit", "dejavusans", "freesans", "liberationsans", "arial", None]:
             try:
                 if name:
                     f = pygame.font.SysFont(name, size, bold=bold)
@@ -355,12 +463,19 @@ class Button:
         color  = self.pressed_color if self.pressed else self.color
         pygame.draw.rect(surf, color, self.rect)
         if self.sub_label:
-            # Small subtitle above, big number below at 50% opacity subtitle
+            # Big number centered, small unit label below
             cx, cy = self.rect.center
             sub_color = tuple(c // 2 for c in self.text_color)
-            draw_text(surf, self.sub_label, 16, sub_color, (cx, cy - 28))
-            draw_text(surf, self.label, font_size, self.text_color,
-                      (cx, cy + 4), bold=True)
+            f_main = font(font_size, True)
+            main_img = f_main.render(self.label, True, self.text_color)
+            f_sub = font(font_size // 3, False)
+            sub_img = f_sub.render(self.sub_label, True, sub_color)
+            gap = 2
+            total_h = main_img.get_height() + sub_img.get_height() + gap
+            y_start = cy - total_h // 2
+            surf.blit(main_img, (cx - main_img.get_width() // 2, y_start))
+            surf.blit(sub_img, (cx - sub_img.get_width() // 2,
+                                y_start + main_img.get_height() + gap))
         else:
             draw_text(surf, self.label, font_size, self.text_color,
                       self.rect.center, bold=True)
@@ -384,7 +499,7 @@ def lerp_color(c1, c2, t: float):
 # ── Main screen (banner + 2×2 button grid at bottom) ──────────────────────
 def render_main(surf: pygame.Surface, main_btns: list,
                 last_mix: str, countdown_end: float,
-                last_ml: int = 0) -> None:
+                last_ml: int = 0, countdown_total: float = 0) -> None:
     surf.fill(C_BG)
 
     # Banner area (above buttons)
@@ -392,54 +507,75 @@ def render_main(surf: pygame.Surface, main_btns: list,
     remaining = max(0.0, countdown_end - time.time()) if countdown_end > 0 else -1
     expired = countdown_end > 0 and remaining <= 0
 
+    # Progress bar constants
+    bar_h = 6
+    bar_y = 0
+    bar_margin = 0
+    bar_w = W
+
     if expired:
         # Red-tinted banner for expired
-        pygame.draw.rect(surf, (80, 10, 10), pygame.Rect(0, 0, W, banner_h))
+        pygame.draw.rect(surf, (60, 8, 8), pygame.Rect(0, 0, W, banner_h))
         ml_str = f"{last_ml}ml " if last_ml else ""
-        draw_text(surf, f"{ml_str}MIXED AT {last_mix}", 22, (255, 160, 160),
-                  (W // 2, banner_h // 2 - 35))
-        draw_text(surf, "EXPIRED", 70, C_RED,
+        draw_text(surf, f"{ml_str}MIXED AT {last_mix}", 28, (255, 140, 140),
+                  (W // 2, banner_h // 2 - 45))
+        draw_text(surf, "EXPIRED", 80, C_RED,
                   (W // 2, banner_h // 2 + 30), bold=True)
+        # Full red bar for expired
+        pygame.draw.rect(surf, C_LINE, pygame.Rect(0, bar_y, bar_w, bar_h))
+        pygame.draw.rect(surf, C_RED, pygame.Rect(0, bar_y, bar_w, bar_h))
     elif last_mix:
         ml_str = f"{last_ml}ml " if last_ml else ""
-        draw_text(surf, f"{ml_str}MIXED AT", 22, C_DIM,
-                  (W // 2, banner_h // 2 - 35))
-        draw_text(surf, last_mix, 80, C_GREEN,
+        draw_text(surf, f"{ml_str}MIXED AT", 28, C_DIM,
+                  (W // 2, banner_h // 2 - 45))
+        draw_text(surf, last_mix, 100, C_GREEN,
                   (W // 2, banner_h // 2 + 30), bold=True)
 
         # Countdown in top-right corner
         if remaining > 0:
             mins = int(remaining) // 60
             secs = int(remaining) % 60
-            if remaining > 30 * 60:
-                t_color = C_GREEN
-            elif remaining > 10 * 60:
-                t_color = C_YELLOW
-            elif remaining > 5 * 60:
-                t_color = (255, 140, 30)
+            # Progress fraction (1.0 = full, 0.0 = empty)
+            total = countdown_total if countdown_total > 0 else 3900
+            frac = min(1.0, remaining / total)
+            # Color: green → yellow → orange → red
+            if frac > 0.5:
+                t = (frac - 0.5) * 2  # 1→0 as frac goes 1→0.5
+                bar_color = lerp_color(C_YELLOW, C_GREEN, t)
+            elif frac > 0.15:
+                t = (frac - 0.15) / 0.35  # 1→0 as frac goes 0.5→0.15
+                bar_color = lerp_color((255, 140, 30), C_YELLOW, t)
             else:
-                t_color = C_RED
-            draw_text(surf, f"{mins:02d}:{secs:02d}", 36, t_color,
-                      (W - 70, 30), bold=True)
-            draw_text(surf, "remaining", 12, C_DIM, (W - 70, 52))
+                t = frac / 0.15  # 1→0 as frac goes 0.15→0
+                bar_color = lerp_color(C_RED, (255, 140, 30), t)
+            t_color = bar_color
+
+            draw_text(surf, f"{mins:02d}:{secs:02d}", 44, t_color,
+                      (W - 75, 30), bold=True)
+            draw_text(surf, "remaining", 16, C_DIM, (W - 75, 54))
+
+            # Progress bar
+            fill_w = max(int(bar_w * frac), bar_h)
+            pygame.draw.rect(surf, C_LINE, pygame.Rect(0, bar_y, bar_w, bar_h))
+            pygame.draw.rect(surf, bar_color, pygame.Rect(0, bar_y, fill_w, bar_h))
     else:
-        draw_text(surf, "NO BOTTLE MIXED YET", 28, C_DIM,
+        draw_text(surf, "NO BOTTLE MIXED YET", 36, C_DIM,
                   (W // 2, banner_h // 2))
 
     # Divider below banner
-    pygame.draw.rect(surf, (80, 80, 80), pygame.Rect(0, banner_h - 1, W, 2))
+    pygame.draw.rect(surf, C_BORDER, pygame.Rect(0, banner_h - 1, W, 2))
 
     for btn in main_btns:
-        btn.draw(surf, font_size=40 if btn.sub_label else 28)
+        btn.draw(surf, font_size=50 if btn.sub_label else 34)
 
     # Dividers between the 3×2 button grid (drawn after buttons)
     btn_area_y = banner_h
     col_w = W // 3
-    pygame.draw.rect(surf, (80, 80, 80),
+    pygame.draw.rect(surf, C_BORDER,
                      pygame.Rect(col_w - 1, btn_area_y, 2, 200))
-    pygame.draw.rect(surf, (80, 80, 80),
+    pygame.draw.rect(surf, C_BORDER,
                      pygame.Rect(col_w * 2 - 1, btn_area_y, 2, 200))
-    pygame.draw.rect(surf, (80, 80, 80),
+    pygame.draw.rect(surf, C_BORDER,
                      pygame.Rect(0, btn_area_y + 100 - 1, W, 2))
 
     # Gear icon (top-left)
@@ -462,7 +598,7 @@ def render_samples(surf: pygame.Surface, back_btn: Button) -> None:
         y = card_area_y
         rect = pygame.Rect(x, y, card_w, card_h)
 
-        card_bg = (38, 38, 52) if i % 2 == 1 else C_CARD
+        card_bg = C_CARD2 if i % 2 == 1 else C_CARD
         pygame.draw.rect(surf, card_bg, rect)
         if i > 0:
             pygame.draw.line(surf, C_LINE, (x, y), (x, y + card_h))
@@ -482,17 +618,17 @@ def render_samples(surf: pygame.Surface, back_btn: Button) -> None:
                   (cx, y + card_h // 2 + 85), bold=True)
         draw_text(surf, "g", 22, C_DIM, (cx, y + card_h // 2 + 130))
 
-    pygame.draw.rect(surf, (80, 80, 80), pygame.Rect(0, H - 102, W, 2))
+    pygame.draw.rect(surf, C_BORDER, pygame.Rect(0, H - 102, W, 2))
     back_btn.draw(surf, font_size=24)
 
     pygame.display.flip()
 
 
 # ── Log screen ─────────────────────────────────────────────────────────────
-LOG_CARD_H = 42
-LOG_CARD_PAD = 4
-LOG_CARD_Y0 = 66
-LOG_MAX_SHOW = 8
+LOG_CARD_H = 62
+LOG_CARD_PAD = 5
+LOG_CARD_Y0 = 82
+LOG_MAX_SHOW = 5
 
 
 def _entry_date(entry) -> str:
@@ -575,33 +711,28 @@ def render_log(surf: pygame.Surface, mix_log: list,
     if not log_view_date and dates:
         has_next = True  # from undated can go to first dated
 
-    draw_text(surf, date_label, 22, C_WHITE, (W // 2, 28), bold=True)
+    draw_text(surf, date_label, 30, C_WHITE, (W // 2, 30), bold=True)
 
     # Prev/Next arrows in header
     if has_prev:
-        log_prev_btn.draw(surf, font_size=22)
+        log_prev_btn.draw(surf, font_size=26)
     if has_next:
-        log_next_btn.draw(surf, font_size=22)
+        log_next_btn.draw(surf, font_size=26)
 
-    # Backup status (small, top-right)
-    bstatus = load_backup_status()
-    if bstatus.get("time"):
-        if bstatus.get("ok"):
-            bs_text = f"Backed up {bstatus['time']}"
-            bs_color = (50, 140, 70)
-        else:
-            bs_text = f"Backup failed {bstatus['time']}"
-            bs_color = (180, 60, 60)
-        draw_text(surf, bs_text, 11, bs_color, (W - 90, 50))
+    # Online/offline indicator
+    if api_client.is_online():
+        draw_text(surf, "\u2601 \u2713", 16, C_GREEN, (W - 40, 50), bold=True)
+    else:
+        draw_text(surf, "\u2601 \u2717", 16, C_RED, (W - 40, 50), bold=True)
 
     # Filter entries for current date
     filtered = _filter_log_by_date(mix_log, log_view_date)
 
     if not filtered:
-        draw_text(surf, "No entries for this day", 20, C_DIM, (W // 2, (H - 100) // 2))
+        draw_text(surf, "No entries for this day", 26, C_DIM, (W // 2, (H - 100) // 2))
     else:
         count_label = f"{len(filtered)} bottle{'s' if len(filtered) != 1 else ''}"
-        draw_text(surf, count_label, 14, C_DIM, (W // 2, 50))
+        draw_text(surf, count_label, 18, C_DIM, (W // 2, 54))
 
         for card_rect, real_idx in _log_card_rects(filtered):
             entry = mix_log[real_idx]
@@ -610,37 +741,37 @@ def render_log(surf: pygame.Surface, mix_log: list,
             disp_idx = real_idx  # use real index for numbering
 
             # Card background
-            card_bg = (28, 28, 40) if (real_idx % 2 == 0) else C_CARD
+            card_bg = C_CARD2 if (real_idx % 2 == 0) else C_CARD
             pygame.draw.rect(surf, card_bg, card_rect, border_radius=8)
             if real_idx == selected_idx:
                 pygame.draw.rect(surf, C_BLUE, card_rect, width=2, border_radius=8)
 
             # Entry number
-            draw_text(surf, str(disp_idx + 1), 14, C_DIM, (30, card_rect.centery))
+            draw_text(surf, str(disp_idx + 1), 18, C_DIM, (30, card_rect.centery))
 
             # Time only (strip date from text if present)
-            draw_text(surf, txt, 20, C_WHITE,
-                      (W // 2, card_rect.centery - (6 if leftover else 0)), bold=True)
+            draw_text(surf, txt, 26, C_WHITE,
+                      (W // 2, card_rect.centery - (8 if leftover else 0)), bold=True)
 
             # Leftover
             if leftover:
-                draw_text(surf, f"leftover: {leftover}", 13, C_YELLOW,
-                          (W // 2, card_rect.centery + 12))
+                draw_text(surf, f"leftover: {leftover}", 16, C_YELLOW,
+                          (W // 2, card_rect.centery + 15))
 
     # Bottom bar
-    pygame.draw.rect(surf, (80, 80, 80), pygame.Rect(0, H - 102, W, 2))
+    pygame.draw.rect(surf, C_BORDER, pygame.Rect(0, H - 102, W, 2))
     if selected_idx >= 0:
-        back_btn.draw(surf, font_size=24)
-        log_leftover_btn.draw(surf, font_size=20)
-        log_delete_btn.draw(surf, font_size=20)
+        back_btn.draw(surf, font_size=28)
+        log_leftover_btn.draw(surf, font_size=24)
+        log_delete_btn.draw(surf, font_size=24)
         btn_w = W // 3
-        pygame.draw.rect(surf, (80, 80, 80), pygame.Rect(btn_w - 1, H - 100, 2, 100))
-        pygame.draw.rect(surf, (80, 80, 80), pygame.Rect(btn_w * 2 - 1, H - 100, 2, 100))
+        pygame.draw.rect(surf, C_BORDER, pygame.Rect(btn_w - 1, H - 100, 2, 100))
+        pygame.draw.rect(surf, C_BORDER, pygame.Rect(btn_w * 2 - 1, H - 100, 2, 100))
     else:
-        back_btn.draw(surf, font_size=24)
+        back_btn.draw(surf, font_size=28)
         if trends_btn:
-            trends_btn.draw(surf, font_size=24)
-            pygame.draw.rect(surf, (80, 80, 80), pygame.Rect(W // 2 - 1, H - 100, 2, 100))
+            trends_btn.draw(surf, font_size=28)
+            pygame.draw.rect(surf, C_BORDER, pygame.Rect(W // 2 - 1, H - 100, 2, 100))
 
     pygame.display.flip()
 
@@ -680,7 +811,7 @@ def render_numpad(surf: pygame.Surface, title: str, value: str) -> None:
     dlg_w, dlg_h = 340, 370
     dlg_x = (W - dlg_w) // 2
     dlg_y = (H - dlg_h) // 2
-    pygame.draw.rect(surf, (30, 30, 44), pygame.Rect(dlg_x, dlg_y, dlg_w, dlg_h),
+    pygame.draw.rect(surf, C_CARD, pygame.Rect(dlg_x, dlg_y, dlg_w, dlg_h),
                      border_radius=14)
 
     # Title
@@ -688,7 +819,7 @@ def render_numpad(surf: pygame.Surface, title: str, value: str) -> None:
 
     # Value display
     val_rect = pygame.Rect(dlg_x + 20, dlg_y + 40, dlg_w - 40, 36)
-    pygame.draw.rect(surf, (18, 18, 28), val_rect, border_radius=8)
+    pygame.draw.rect(surf, C_BG, val_rect, border_radius=8)
     pygame.draw.rect(surf, C_LINE, val_rect, width=1, border_radius=8)
     display_val = value if value else ""
     draw_text(surf, display_val + " ml", 22, C_WHITE, val_rect.center)
@@ -696,13 +827,13 @@ def render_numpad(surf: pygame.Surface, title: str, value: str) -> None:
     # Numpad buttons
     for rect, label in _numpad_rects():
         if label == "OK":
-            bg = (28, 70, 38)
+            bg = C_GREEN_BG
             tc = C_GREEN
         elif label == "C":
-            bg = (60, 20, 20)
+            bg = C_RED_BG
             tc = C_RED
         else:
-            bg = (38, 38, 58)
+            bg = C_BTN
             tc = C_WHITE
         pygame.draw.rect(surf, bg, rect.inflate(-4, -4), border_radius=8)
         draw_text(surf, label, 24, tc, rect.center, bold=True)
@@ -764,13 +895,13 @@ def render_settings(surf: pygame.Surface, countdown_secs: int, ss_timeout_min: i
     ss_minus.draw(surf, font_size=30)
 
     # ── Bottom buttons (3 columns) ────────────────────────────────────────
-    pygame.draw.rect(surf, (80, 80, 80), pygame.Rect(0, H - 102, W, 2))
+    pygame.draw.rect(surf, C_BORDER, pygame.Rect(0, H - 102, W, 2))
     back_btn.draw(surf, font_size=24)
     reset_btn.draw(surf, font_size=20)
     close_btn.draw(surf, font_size=20)
     btn_w = W // 3
-    pygame.draw.rect(surf, (80, 80, 80), pygame.Rect(btn_w - 1, H - 100, 2, 100))
-    pygame.draw.rect(surf, (80, 80, 80), pygame.Rect(btn_w * 2 - 1, H - 100, 2, 100))
+    pygame.draw.rect(surf, C_BORDER, pygame.Rect(btn_w - 1, H - 100, 2, 100))
+    pygame.draw.rect(surf, C_BORDER, pygame.Rect(btn_w * 2 - 1, H - 100, 2, 100))
 
     pygame.display.flip()
 
@@ -815,7 +946,7 @@ def render_trends(surf: pygame.Surface, mix_log: list,
     # Tab buttons
     for i, btn in enumerate(range_btns):
         if i == trend_range_idx:
-            btn.color = (28, 50, 70)
+            btn.color = C_BLUE_BG
             btn.text_color = C_BLUE
         else:
             btn.color = C_BTN
@@ -879,7 +1010,7 @@ def render_trends(surf: pygame.Surface, mix_log: list,
             y = chart_bottom - int(chart_h * frac)
             val = int(max_val * frac)
             draw_text(surf, str(val), 11, C_DIM, (chart_left - 8, y))
-            pygame.draw.line(surf, (40, 40, 58), (chart_left, y), (chart_right, y), 1)
+            pygame.draw.line(surf, C_LINE, (chart_left, y), (chart_right, y), 1)
 
         # Bars
         for i, day in enumerate(all_days):
@@ -887,7 +1018,7 @@ def render_trends(surf: pygame.Surface, mix_log: list,
             bar_h = int((val / max(1, max_val)) * (chart_h - 10))
             x = chart_left + gap + i * (bar_w + gap)
             y = chart_bottom - bar_h
-            bar_color = (90, 170, 255) if val > 0 else (40, 40, 58)
+            bar_color = C_BLUE if val > 0 else C_LINE
             pygame.draw.rect(surf, bar_color,
                              pygame.Rect(x, y, bar_w, bar_h),
                              border_radius=min(3, bar_w // 2))
@@ -902,7 +1033,7 @@ def render_trends(surf: pygame.Surface, mix_log: list,
                 draw_text(surf, lbl, 10, C_DIM, (x + bar_w // 2, chart_bottom + 10))
 
     # Bottom bar
-    pygame.draw.rect(surf, (80, 80, 80), pygame.Rect(0, H - 102, W, 2))
+    pygame.draw.rect(surf, C_BORDER, pygame.Rect(0, H - 102, W, 2))
     back_btn.draw(surf, font_size=24)
 
     pygame.display.flip()
@@ -935,7 +1066,7 @@ def render_calculator(surf: pygame.Surface, water_ml: int,
 
     # ── Right half: Powder ───────────────────────────────────────────────────
     right_x = W // 2
-    bg = (18, 44, 26) if water_ml > 0 else C_CARD
+    bg = C_GREEN_BG if water_ml > 0 else C_CARD
     pygame.draw.rect(surf, bg, pygame.Rect(right_x, 0, left_w, H - 100))
     # Divider
     pygame.draw.line(surf, C_LINE, (right_x, 0), (right_x, H - 100))
@@ -950,7 +1081,7 @@ def render_calculator(surf: pygame.Surface, water_ml: int,
     draw_text(surf, "g", 30, p_color, (right_x + left_w // 2, mid_y + 55))
 
     # Divider between content and buttons
-    pygame.draw.rect(surf, (80, 80, 80), pygame.Rect(0, H - 102, W, 2))
+    pygame.draw.rect(surf, C_BORDER, pygame.Rect(0, H - 102, W, 2))
 
     # Bottom buttons
     back_btn.draw(surf, font_size=24)
@@ -1037,14 +1168,28 @@ def get_baby_img() -> pygame.Surface:
     return _load_ss_img(BABY_IMG_PATH, remove_white=True, lighten_dark=False)
 
 
+_ss_clock_pos = None
+_ss_clock_last_move = 0.0
+
 def render_screensaver(surf: pygame.Surface, sprites: list) -> None:
     """sprites: list of (x, y, flip_h, flip_v, img_getter)"""
+    global _ss_clock_pos, _ss_clock_last_move
+    import random
     surf.fill((0, 0, 0))
     for sx, sy, fh, fv, getter in sprites:
         img = getter()
         img = pygame.transform.flip(img, fh, fv)
         rect = img.get_rect(center=(int(sx), int(sy)))
         surf.blit(img, rect)
+
+    # Faint digital clock that moves every 5 minutes
+    now = time.time()
+    if _ss_clock_pos is None or now - _ss_clock_last_move > 300:
+        _ss_clock_pos = (random.randint(100, W - 100), random.randint(60, H - 60))
+        _ss_clock_last_move = now
+    clock_str = datetime.now().strftime("%I:%M %p")
+    draw_text(surf, clock_str, 36, (40, 40, 55), _ss_clock_pos, bold=True)
+
     pygame.display.flip()
 
 
@@ -1072,33 +1217,33 @@ def main(fullscreen: bool, simulate: bool) -> None:
     row2_y = H - main_btn_h
     main_start60_btn = Button(
         pygame.Rect(0, row1_y, col_w, main_btn_h),
-        "60", sub_label="start",
-        color=(28, 70, 38), pressed_color=(18, 50, 26), text_color=C_GREEN,
+        "60", sub_label="ml",
+        color=C_GREEN_BG, pressed_color=C_GREEN_PR, text_color=C_GREEN,
     )
     main_start90_btn = Button(
         pygame.Rect(col_w, row1_y, col_w, main_btn_h),
-        "90", sub_label="start",
-        color=(28, 70, 38), pressed_color=(18, 50, 26), text_color=C_GREEN,
+        "90", sub_label="ml",
+        color=C_GREEN_BG, pressed_color=C_GREEN_PR, text_color=C_GREEN,
     )
     main_start120_btn = Button(
         pygame.Rect(col_w * 2, row1_y, W - col_w * 2, main_btn_h),
-        "120", sub_label="start",
-        color=(28, 70, 38), pressed_color=(18, 50, 26), text_color=C_GREEN,
+        "120", sub_label="ml",
+        color=C_GREEN_BG, pressed_color=C_GREEN_PR, text_color=C_GREEN,
     )
     main_log_btn = Button(
         pygame.Rect(0, row2_y, col_w, main_btn_h),
         "Log",
-        color=(55, 45, 20), pressed_color=(40, 32, 14), text_color=C_YELLOW,
+        color=C_YELLOW_BG, pressed_color=C_YELLOW_PR, text_color=C_YELLOW,
     )
     main_samples_btn = Button(
         pygame.Rect(col_w, row2_y, col_w, main_btn_h),
         "Sample Sizes",
-        color=(22, 40, 60), pressed_color=(14, 28, 44), text_color=C_BLUE,
+        color=C_BLUE_BG, pressed_color=C_BLUE_PR, text_color=C_BLUE,
     )
     main_custom_btn = Button(
         pygame.Rect(col_w * 2, row2_y, W - col_w * 2, main_btn_h),
         "Custom Amount",
-        color=(45, 25, 50), pressed_color=(32, 16, 36), text_color=(180, 120, 255),
+        color=C_PURPLE_BG, pressed_color=C_PURPLE_PR, text_color=C_PURPLE,
     )
     main_btns = [main_start60_btn, main_start90_btn, main_start120_btn,
                  main_log_btn, main_samples_btn, main_custom_btn]
@@ -1111,15 +1256,15 @@ def main(fullscreen: bool, simulate: bool) -> None:
     log_back_btn = Button(pygame.Rect(0, H - 100, W // 2, 100), "Back")
     log_trends_btn = Button(
         pygame.Rect(W // 2, H - 100, W // 2, 100),
-        "Trends", color=(22, 40, 60), pressed_color=(14, 28, 44), text_color=C_BLUE,
+        "Trends", color=C_BLUE_BG, pressed_color=C_BLUE_PR, text_color=C_BLUE,
     )
     log_leftover_btn = Button(
         pygame.Rect(log_btn_w, H - 100, log_btn_w, 100),
-        "Leftover", color=(55, 45, 20), pressed_color=(40, 32, 14), text_color=C_YELLOW,
+        "Leftover", color=C_YELLOW_BG, pressed_color=C_YELLOW_PR, text_color=C_YELLOW,
     )
     log_delete_btn = Button(
         pygame.Rect(log_btn_w * 2, H - 100, W - log_btn_w * 2, 100),
-        "Delete", color=(60, 20, 20), pressed_color=(45, 10, 10), text_color=C_RED,
+        "Delete", color=C_RED_BG, pressed_color=C_RED_PR, text_color=C_RED,
     )
     log_prev_btn = Button(
         pygame.Rect(10, 10, 60, 36),
@@ -1134,11 +1279,11 @@ def main(fullscreen: bool, simulate: bool) -> None:
     calc_btn_w = 110
     calc_plus_btn = Button(
         pygame.Rect(W // 2 - calc_btn_w, 0, calc_btn_w, (H - 100) // 2),
-        "+", color=(28, 50, 70), pressed_color=(18, 35, 50), text_color=C_BLUE,
+        "+", color=C_BLUE_BG, pressed_color=C_BLUE_PR, text_color=C_BLUE,
     )
     calc_minus_btn = Button(
         pygame.Rect(W // 2 - calc_btn_w, (H - 100) // 2, calc_btn_w, (H - 100) // 2),
-        "-", color=(50, 28, 28), pressed_color=(35, 18, 18), text_color=C_RED,
+        "-", color=C_RED_BG, pressed_color=C_RED_PR, text_color=C_RED,
     )
     calc_back_btn = Button(
         pygame.Rect(0, H - 100, W // 2, 100),
@@ -1147,35 +1292,35 @@ def main(fullscreen: bool, simulate: bool) -> None:
     calc_timer_btn = Button(
         pygame.Rect(W // 2, H - 100, W // 2, 100),
         "Start Timer",
-        color=(28, 70, 38), pressed_color=(18, 50, 26), text_color=C_GREEN,
+        color=C_GREEN_BG, pressed_color=C_GREEN_PR, text_color=C_GREEN,
     )
 
     # ── Settings screen buttons ───────────────────────────────────────────────
     set_timer_plus = Button(
         pygame.Rect(W // 2 + 100, 115, 80, 50),
-        "+", color=(28, 50, 70), pressed_color=(18, 35, 50), text_color=C_BLUE,
+        "+", color=C_BLUE_BG, pressed_color=C_BLUE_PR, text_color=C_BLUE,
     )
     set_timer_minus = Button(
         pygame.Rect(W // 2 - 180, 115, 80, 50),
-        "-", color=(50, 28, 28), pressed_color=(35, 18, 18), text_color=C_RED,
+        "-", color=C_RED_BG, pressed_color=C_RED_PR, text_color=C_RED,
     )
     set_ss_plus = Button(
         pygame.Rect(W // 2 + 100, 255, 80, 50),
-        "+", color=(28, 50, 70), pressed_color=(18, 35, 50), text_color=C_BLUE,
+        "+", color=C_BLUE_BG, pressed_color=C_BLUE_PR, text_color=C_BLUE,
     )
     set_ss_minus = Button(
         pygame.Rect(W // 2 - 180, 255, 80, 50),
-        "-", color=(50, 28, 28), pressed_color=(35, 18, 18), text_color=C_RED,
+        "-", color=C_RED_BG, pressed_color=C_RED_PR, text_color=C_RED,
     )
     set_btn_w = W // 3
     set_back_btn = Button(pygame.Rect(0, H - 100, set_btn_w, 100), "Back")
     set_reset_btn = Button(
         pygame.Rect(set_btn_w, H - 100, set_btn_w, 100),
-        "Reset Timer", color=(55, 45, 20), pressed_color=(40, 32, 14), text_color=C_YELLOW,
+        "Reset Timer", color=C_YELLOW_BG, pressed_color=C_YELLOW_PR, text_color=C_YELLOW,
     )
     set_close_btn = Button(
         pygame.Rect(set_btn_w * 2, H - 100, W - set_btn_w * 2, 100),
-        "Close App", color=(80, 20, 20), pressed_color=(60, 10, 10), text_color=C_RED,
+        "Close App", color=C_RED_BG, pressed_color=C_RED_PR, text_color=C_RED,
     )
 
     # ── Trends screen buttons ────────────────────────────────────────────────
@@ -1193,19 +1338,20 @@ def main(fullscreen: bool, simulate: bool) -> None:
     trends_back_btn = Button(pygame.Rect(0, H - 100, W, 100), "Back")
     trend_range_idx = 0
 
-    # ── State ──────────────────────────────────────────────────────────────────
-    settings       = load_settings()
+    # ── State (from cloud API) ──────────────────────────────────────────────────
+    api_client.init()
+    cloud          = api_client.get_state()
+    settings       = cloud.get("settings", {"countdown_secs": 3900, "ss_timeout_min": 2})
     countdown_secs = settings.get("countdown_secs", DEFAULT_COUNTDOWN_MIN * 60)
     ss_timeout_min = settings.get("ss_timeout_min", 2)
 
     mode           = AppMode.MAIN
-    saved_state    = load_state()
-    countdown_end  = saved_state.get("countdown_end", 0.0)
-    ntfy_sent      = saved_state.get("ntfy_sent", False)
-    mixed_at_str   = saved_state.get("mixed_at_str", "")
-    mixed_ml       = saved_state.get("mixed_ml", 0)
+    countdown_end  = cloud.get("countdown_end", 0.0)
+    ntfy_sent      = cloud.get("ntfy_sent", False)
+    mixed_at_str   = cloud.get("mixed_at_str", "")
+    mixed_ml       = cloud.get("mixed_ml", 0)
     calc_water_ml  = 60  # calculator water amount
-    mix_log        = load_log()
+    mix_log        = cloud.get("mix_log", [])
     log_selected   = -1   # index of selected log entry (-1 = none)
     log_view_date  = ""   # YYYY-MM-DD or "" for today
     numpad_active  = False
@@ -1214,7 +1360,7 @@ def main(fullscreen: bool, simulate: bool) -> None:
     running        = True
     last_frame_key = None
     last_input     = time.monotonic()
-    last_sync      = 0.0  # last time we synced state from disk
+    last_sync      = 0.0  # last time we synced state from API
     pre_ss_mode    = AppMode.MAIN  # mode to return to after screensaver
 
     # Screensaver bouncing sprites: [x, y, dx, dy, flip_h, flip_v, img_getter]
@@ -1255,35 +1401,26 @@ def main(fullscreen: bool, simulate: bool) -> None:
                     countdown_end = time.time() + countdown_secs
                     mixed_at_str  = datetime.now().strftime("%I:%M %p")
                     mixed_ml      = 60
-                    mix_log.append({"text": f"60ml @ {mixed_at_str}", "leftover": "",
-                                    "ml": 60, "date": datetime.now().strftime("%Y-%m-%d %I:%M %p")})
-                    save_log(mix_log)
+                    api_client.start_timer_async(60)
                     ntfy_sent     = False
-                    save_state(countdown_end, mixed_at_str, mixed_ml, ntfy_sent)
                     btn_changed   = True
                 elif main_start90_btn.handle_event(event):
                     countdown_end = time.time() + countdown_secs
                     mixed_at_str  = datetime.now().strftime("%I:%M %p")
                     mixed_ml      = 90
-                    mix_log.append({"text": f"90ml @ {mixed_at_str}", "leftover": "",
-                                    "ml": 90, "date": datetime.now().strftime("%Y-%m-%d %I:%M %p")})
-                    save_log(mix_log)
+                    api_client.start_timer_async(90)
                     ntfy_sent     = False
-                    save_state(countdown_end, mixed_at_str, mixed_ml, ntfy_sent)
                     btn_changed   = True
                 elif main_start120_btn.handle_event(event):
                     countdown_end = time.time() + countdown_secs
                     mixed_at_str  = datetime.now().strftime("%I:%M %p")
                     mixed_ml      = 120
-                    mix_log.append({"text": f"120ml @ {mixed_at_str}", "leftover": "",
-                                    "ml": 120, "date": datetime.now().strftime("%Y-%m-%d %I:%M %p")})
-                    save_log(mix_log)
+                    api_client.start_timer_async(120)
                     ntfy_sent     = False
-                    save_state(countdown_end, mixed_at_str, mixed_ml, ntfy_sent)
                     btn_changed   = True
                 elif main_log_btn.handle_event(event):
                     mode        = AppMode.LOG
-                    mix_log     = load_log()  # reload from disk
+                    mix_log     = api_client.get_log()
                     log_selected = -1
                     numpad_active = False
                     log_view_date = datetime.now().strftime("%Y-%m-%d")
@@ -1303,7 +1440,7 @@ def main(fullscreen: bool, simulate: bool) -> None:
                     else:
                         countdown_secs = min(countdown_secs + 300, 180 * 60)
                     settings["countdown_secs"] = countdown_secs
-                    save_settings(settings)
+                    api_client.save_settings(settings)
                     btn_changed = True
                 elif set_timer_minus.handle_event(event):
                     if countdown_secs <= 60:
@@ -1311,17 +1448,17 @@ def main(fullscreen: bool, simulate: bool) -> None:
                     else:
                         countdown_secs = max(countdown_secs - 300, 60)
                     settings["countdown_secs"] = countdown_secs
-                    save_settings(settings)
+                    api_client.save_settings(settings)
                     btn_changed = True
                 elif set_ss_plus.handle_event(event):
                     ss_timeout_min = min(ss_timeout_min + 1, 30)
                     settings["ss_timeout_min"] = ss_timeout_min
-                    save_settings(settings)
+                    api_client.save_settings(settings)
                     btn_changed = True
                 elif set_ss_minus.handle_event(event):
                     ss_timeout_min = max(ss_timeout_min - 1, 1)
                     settings["ss_timeout_min"] = ss_timeout_min
-                    save_settings(settings)
+                    api_client.save_settings(settings)
                     btn_changed = True
                 elif set_back_btn.handle_event(event):
                     mode = AppMode.MAIN
@@ -1331,7 +1468,7 @@ def main(fullscreen: bool, simulate: bool) -> None:
                     mixed_at_str = ""
                     mixed_ml = 0
                     ntfy_sent = False
-                    save_state(countdown_end, mixed_at_str, mixed_ml, ntfy_sent)
+                    api_client.reset_timer()
                     btn_changed = True
                 elif set_close_btn.handle_event(event):
                     running = False
@@ -1354,7 +1491,9 @@ def main(fullscreen: bool, simulate: bool) -> None:
                                             entry = {"text": entry, "leftover": ""}
                                             mix_log[log_selected] = entry
                                         entry["leftover"] = (numpad_value + "ml") if numpad_value else ""
-                                        save_log(mix_log)
+                                        sk = entry.get("sk", "") if isinstance(entry, dict) else ""
+                                        if sk:
+                                            api_client.edit_log_entry(sk, {"leftover": entry["leftover"]})
                                     numpad_active = False
                                     numpad_value = ""
                                     btn_changed = True
@@ -1375,7 +1514,7 @@ def main(fullscreen: bool, simulate: bool) -> None:
                     btn_changed = True
                 elif log_trends_btn.handle_event(event) and log_selected < 0:
                     mode = AppMode.TRENDS
-                    mix_log = load_log()
+                    mix_log = api_client.get_log()
                     btn_changed = True
                 elif log_prev_btn.handle_event(event):
                     dates = _log_dates(mix_log)
@@ -1411,8 +1550,11 @@ def main(fullscreen: bool, simulate: bool) -> None:
                     btn_changed = True
                 elif log_selected >= 0 and log_delete_btn.handle_event(event):
                     if log_selected < len(mix_log):
+                        entry = mix_log[log_selected]
+                        sk = entry.get("sk", "") if isinstance(entry, dict) else ""
+                        if sk:
+                            api_client.delete_log_entry_async(sk)
                         mix_log.pop(log_selected)
-                        save_log(mix_log)
                     log_selected = -1
                     log_back_btn.rect = pygame.Rect(0, H - 100, W // 2, 100)
                     btn_changed = True
@@ -1428,7 +1570,7 @@ def main(fullscreen: bool, simulate: bool) -> None:
             elif mode == AppMode.TRENDS:
                 if trends_back_btn.handle_event(event):
                     mode = AppMode.LOG
-                    mix_log = load_log()
+                    mix_log = api_client.get_log()
                     btn_changed = True
                 else:
                     for ti, tb in enumerate(trend_range_btns):
@@ -1452,19 +1594,15 @@ def main(fullscreen: bool, simulate: bool) -> None:
                     countdown_end = time.time() + countdown_secs
                     mixed_at_str  = datetime.now().strftime("%I:%M %p")
                     mixed_ml      = calc_water_ml
-                    mix_log.append({"text": f"{calc_water_ml}ml @ {mixed_at_str}", "leftover": "",
-                                    "ml": calc_water_ml, "date": datetime.now().strftime("%Y-%m-%d %I:%M %p")})
-                    save_log(mix_log)
+                    mix_log = load_log()
+                    api_client.start_timer_async(calc_water_ml)
                     ntfy_sent     = False
-                    save_state(countdown_end, mixed_at_str, mixed_ml, ntfy_sent)
                     btn_changed   = True
 
-        # Send ntfy when countdown expires
-        if countdown_end > 0 and not ntfy_sent and \
-                time.time() > countdown_end:
+        # Expiry notification is handled server-side via GET /api/state
+        # Just update local expired state for display
+        if countdown_end > 0 and not ntfy_sent and time.time() > countdown_end:
             ntfy_sent = True
-            save_state(countdown_end, mixed_at_str, mixed_ml, ntfy_sent)
-            send_ntfy("Formula has expired — discard the milk!", mixed_at=mixed_at_str)
 
         # Screensaver activation (only from MAIN mode)
         if mode == AppMode.MAIN and \
@@ -1508,22 +1646,24 @@ def main(fullscreen: bool, simulate: bool) -> None:
 
         # Periodic sync from disk (every 2 seconds) to pick up web app changes
         now_t = time.time()
-        if now_t - last_sync > 2.0:
+        if now_t - last_sync > 5.0:
             last_sync = now_t
-            disk_state = load_state()
-            disk_end = disk_state.get("countdown_end", 0.0)
-            disk_mix = disk_state.get("mixed_at_str", "")
-            # Only update if disk state differs (web app changed it)
-            if disk_end != countdown_end or disk_mix != mixed_at_str:
-                countdown_end = disk_end
-                mixed_at_str  = disk_state.get("mixed_at_str", "")
-                mixed_ml      = disk_state.get("mixed_ml", 0)
-                ntfy_sent     = disk_state.get("ntfy_sent", False)
+            cloud = api_client.poll_state()
+            cloud_end = cloud.get("countdown_end", 0.0)
+            cloud_mix = cloud.get("mixed_at_str", "")
+            # Update if cloud state differs
+            if cloud_end != countdown_end or cloud_mix != mixed_at_str:
+                countdown_end = cloud_end
+                mixed_at_str  = cloud.get("mixed_at_str", "")
+                mixed_ml      = cloud.get("mixed_ml", 0)
+                ntfy_sent     = cloud.get("ntfy_sent", False)
                 last_frame_key = None  # force redraw
-            # Also sync settings
-            disk_settings = load_settings()
-            new_cd = disk_settings.get("countdown_secs", DEFAULT_COUNTDOWN_MIN * 60)
-            new_ss = disk_settings.get("ss_timeout_min", 2)
+            # Sync log
+            mix_log = cloud.get("mix_log", mix_log)
+            # Sync settings
+            cloud_settings = cloud.get("settings", {})
+            new_cd = cloud_settings.get("countdown_secs", countdown_secs)
+            new_ss = cloud_settings.get("ss_timeout_min", ss_timeout_min)
             if new_cd != countdown_secs or new_ss != ss_timeout_min:
                 countdown_secs = new_cd
                 ss_timeout_min = new_ss
@@ -1562,7 +1702,7 @@ def main(fullscreen: bool, simulate: bool) -> None:
 
         if frame_key != last_frame_key or btn_changed:
             if mode == AppMode.MAIN:
-                render_main(surf, main_btns, mixed_at_str, countdown_end, mixed_ml)
+                render_main(surf, main_btns, mixed_at_str, countdown_end, mixed_ml, countdown_secs)
             elif mode == AppMode.SAMPLES:
                 render_samples(surf, samples_back_btn)
             elif mode == AppMode.LOG:

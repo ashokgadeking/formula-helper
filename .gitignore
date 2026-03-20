@@ -1,0 +1,34 @@
+# State files (local to each device)
+mix_log.json
+settings.json
+countdown_state.json
+backup_status.json
+weekly_ntfy_state.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Images (large binary assets, except web icons)
+*.png
+!web/icon-*.png
+
+# IDE
+.vscode/
+.idea/
+
+# AWS SAM
+.aws-sam/
+samconfig.toml
+
+# Build artifacts
+lambda_backup.zip
+state_cache.json
+
+# Baby files (user content)
+baby_files/
