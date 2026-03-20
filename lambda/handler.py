@@ -257,7 +257,7 @@ def _compute_weekly_insights(entries):
         if not e.get("date") or not e.get("ml"):
             continue
         try:
-            d = datetime.strptime(e["date"], "%Y-%m-%d %I:%M %p")
+            d = datetime.strptime(e["date"], "%Y-%m-%d %I:%M %p").replace(tzinfo=CT)
         except (ValueError, TypeError):
             continue
         ml = int(e["ml"])
