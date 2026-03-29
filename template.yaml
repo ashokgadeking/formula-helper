@@ -57,6 +57,12 @@ Resources:
             Path: /api/start
             Method: POST
             ApiId: !Ref FormulaApi
+        PostLog:
+          Type: HttpApi
+          Properties:
+            Path: /api/log
+            Method: POST
+            ApiId: !Ref FormulaApi
         PutLog:
           Type: HttpApi
           Properties:

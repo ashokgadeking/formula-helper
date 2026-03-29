@@ -670,6 +670,41 @@ def post_start(event):
     return _json_response({"ok": True, "sk": sk})
 
 
+def post_log(event):
+    """Manually create a log entry without affecting the timer."""
+    data = _parse_body(event)
+    ml = int(data.get("ml", 0))
+    if ml <= 0:
+        return _json_response({"ok": False, "error": "ml must be positive"}, 400)
+
+    # Accept an explicit datetime string "YYYY-MM-DD HH:MM AM/PM", else use now
+    date_str = data.get("date", "")
+    if date_str:
+        try:
+            dt = datetime.strptime(date_str, "%Y-%m-%d %I:%M %p").replace(tzinfo=CT)
+            sk = dt.strftime("%Y-%m-%d") + "#" + f"{dt.timestamp():.3f}"
+            mixed_at_str = dt.strftime("%I:%M %p")
+        except ValueError:
+            return _json_response({"ok": False, "error": "invalid date format"}, 400)
+    else:
+        now = _now_ct()
+        mixed_at_str = now.strftime("%I:%M %p")
+        date_str = now.strftime("%Y-%m-%d %I:%M %p")
+        sk = now.strftime("%Y-%m-%d") + "#" + f"{time.time():.3f}"
+
+    table.put_item(Item={
+        "PK": "LOG",
+        "SK": sk,
+        "text": f"{ml}ml @ {mixed_at_str}",
+        "leftover": "",
+        "ml": ml,
+        "date": date_str,
+        "created_by": "manual",
+    })
+
+    return _json_response({"ok": True, "sk": sk})
+
+
 def put_log(event):
     sk = event.get("pathParameters", {}).get("sk", "")
     if not sk:
@@ -722,13 +757,26 @@ def delete_log(event):
     if not sk:
         return _json_response({"ok": False, "error": "missing sk"}, 400)
 
-    # Check if this is the latest entry
     entries = _get_all_log_entries()
-    is_latest = entries and entries[-1].get("SK") == sk
+    is_latest = bool(entries and entries[-1].get("SK") == sk)
+
+    # Also restore if this entry is driving the current timer but isn't the latest
+    # (e.g. a newer entry was manually added after the timer was started)
+    is_active_timer = False
+    if not is_latest:
+        timer_state = _get_timer_state()
+        if timer_state["countdown_end"] > 0:
+            entry = next((e for e in entries if e.get("SK") == sk), None)
+            if entry:
+                try:
+                    mixed_dt = datetime.strptime(entry.get("date", ""), "%Y-%m-%d %I:%M %p")
+                    is_active_timer = mixed_dt.strftime("%I:%M %p") == timer_state["mixed_at_str"]
+                except (ValueError, KeyError):
+                    pass
 
     table.delete_item(Key={"PK": "LOG", "SK": sk})
 
-    if is_latest:
+    if is_latest or is_active_timer:
         _restore_state_from_log()
 
     return _json_response({"ok": True})
@@ -767,6 +815,7 @@ AUTH_ROUTES = {
 PROTECTED_ROUTES = {
     "GET /api/state": get_state,
     "POST /api/start": post_start,
+    "POST /api/log": post_log,
     "PUT /api/log/{sk}": put_log,
     "DELETE /api/log/{sk}": delete_log,
     "POST /api/reset-timer": post_reset_timer,
