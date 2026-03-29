@@ -628,7 +628,7 @@ def get_state(event):
 
 def post_start(event):
     data = _parse_body(event)
-    ml = int(data.get("ml", 60))
+    ml = int(data.get("ml", 90))
     settings = _get_settings()
     countdown_secs = settings["countdown_secs"]
 

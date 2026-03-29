@@ -1209,14 +1209,14 @@ def main(fullscreen: bool, simulate: bool) -> None:
     col_w = W // 3
     row1_y = H - main_btn_h * 2
     row2_y = H - main_btn_h
-    main_start60_btn = Button(
+    main_start90_btn = Button(
         pygame.Rect(0, row1_y, col_w, main_btn_h),
-        "60", sub_label="ml",
+        "90", sub_label="ml",
         color=C_GREEN_BG, pressed_color=C_GREEN_PR, text_color=C_GREEN,
     )
-    main_start90_btn = Button(
+    main_start100_btn = Button(
         pygame.Rect(col_w, row1_y, col_w, main_btn_h),
-        "90", sub_label="ml",
+        "100", sub_label="ml",
         color=C_GREEN_BG, pressed_color=C_GREEN_PR, text_color=C_GREEN,
     )
     main_start120_btn = Button(
@@ -1239,7 +1239,7 @@ def main(fullscreen: bool, simulate: bool) -> None:
         "Custom Amount",
         color=C_PURPLE_BG, pressed_color=C_PURPLE_PR, text_color=C_PURPLE,
     )
-    main_btns = [main_start60_btn, main_start90_btn, main_start120_btn,
+    main_btns = [main_start90_btn, main_start100_btn, main_start120_btn,
                  main_log_btn, main_samples_btn, main_custom_btn]
 
     # ── Samples screen buttons ───────────────────────────────────────────────
@@ -1365,7 +1365,6 @@ def main(fullscreen: bool, simulate: bool) -> None:
     pygame.event.clear()
 
     _ss_just_dismissed = False   # suppress UP that follows screensaver-dismiss DOWN
-    _dbg_pos = None              # last touch position for overlay
     _last_down = (0, 0, 0)       # (x, y, ticks) — for duplicate-event suppression
 
     while running:
@@ -1392,11 +1391,7 @@ def main(fullscreen: bool, simulate: bool) -> None:
 
             if event.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP,
                               pygame.KEYDOWN):
-                if event.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP):
-                    _dbg_pos = event.pos
-                    _dbg_type = "DN" if event.type == pygame.MOUSEBUTTONDOWN else "UP"
-                    with open("/tmp/touch_debug.log", "a") as _f:
-                        _f.write(f"{_dbg_type} {event.pos} mode={mode.name} t={pygame.time.get_ticks()}\n")
+                pass
                 last_input = time.monotonic()
                 if mode == AppMode.SCREENSAVER:
                     if event.type == pygame.MOUSEBUTTONDOWN:
@@ -1415,18 +1410,18 @@ def main(fullscreen: bool, simulate: bool) -> None:
                 continue
 
             if mode == AppMode.MAIN:
-                if main_start60_btn.handle_event(event):
-                    countdown_end = time.time() + countdown_secs
-                    mixed_at_str  = datetime.now().strftime("%I:%M %p")
-                    mixed_ml      = 60
-                    api_client.start_timer_async(60)
-                    ntfy_sent     = False
-                    btn_changed   = True
-                elif main_start90_btn.handle_event(event):
+                if main_start90_btn.handle_event(event):
                     countdown_end = time.time() + countdown_secs
                     mixed_at_str  = datetime.now().strftime("%I:%M %p")
                     mixed_ml      = 90
                     api_client.start_timer_async(90)
+                    ntfy_sent     = False
+                    btn_changed   = True
+                elif main_start100_btn.handle_event(event):
+                    countdown_end = time.time() + countdown_secs
+                    mixed_at_str  = datetime.now().strftime("%I:%M %p")
+                    mixed_ml      = 100
+                    api_client.start_timer_async(100)
                     ntfy_sent     = False
                     btn_changed   = True
                 elif main_start120_btn.handle_event(event):
@@ -1728,18 +1723,6 @@ def main(fullscreen: bool, simulate: bool) -> None:
                 render_trends(surf, mix_log, trend_range_btns,
                               trend_range_idx, trends_back_btn)
 
-
-            # Debug overlay: last touch position at top-center
-            if _dbg_pos:
-                tx, ty = _dbg_pos
-                target = win if (simulate and not fullscreen) else surf
-                pygame.draw.circle(target, (255, 0, 0), (tx, ty), 14, 3)
-                lbl = font(18).render(f"({tx},{ty})", True, (255, 255, 0))
-                bg = pygame.Surface((lbl.get_width() + 8, lbl.get_height() + 4))
-                bg.fill((0, 0, 0))
-                target.blit(bg, (W // 2 - bg.get_width() // 2, 0))
-                target.blit(lbl, (W // 2 - lbl.get_width() // 2, 2))
-                pygame.display.flip()
 
             if simulate and not fullscreen:
                 win.blit(surf, (0, 0))

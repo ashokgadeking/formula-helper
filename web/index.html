@@ -276,8 +276,8 @@ input{-webkit-user-select:text;user-select:text}
     </div>
   </div>
   <div class="btn-grid">
-    <button class="start-btn" onclick="startTimer(60)"><span class="num">60</span><span class="ml-unit">ml</span></button>
     <button class="start-btn" onclick="startTimer(90)"><span class="num">90</span><span class="ml-unit">ml</span></button>
+    <button class="start-btn" onclick="startTimer(100)"><span class="num">100</span><span class="ml-unit">ml</span></button>
     <button class="start-btn" onclick="startTimer(120)"><span class="num">120</span><span class="ml-unit">ml</span></button>
     <button class="log-btn" onclick="showScreen('log')">Log</button>
     <button class="samples-btn" onclick="showScreen('samples')">Sample Sizes</button>
@@ -418,7 +418,7 @@ input{-webkit-user-select:text;user-select:text}
 <script>
 const API_BASE = '';
 let state = {};
-let calcWater = 60;
+let calcWater = 90;
 const POWDER_PER_60 = 8.3;
 let trendRange = 'week';
 let trendChart = null;

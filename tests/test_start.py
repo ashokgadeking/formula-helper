@@ -40,14 +40,14 @@ class TestPostStart:
         assert timer["countdown_end"] > time.time()
         assert timer["countdown_end"] < time.time() + 1801
 
-    def test_start_defaults_to_60ml(self, handler):
-        """No ml parameter defaults to 60."""
+    def test_start_defaults_to_90ml(self, handler):
+        """No ml parameter defaults to 90."""
         event = make_event("POST /api/start", body={})
         handler.lambda_handler(event, None)
 
         state_event = make_event("GET /api/state")
         _, state = parse_response(handler.lambda_handler(state_event, None))
-        assert state["mix_log"][0]["ml"] == 60
+        assert state["mix_log"][0]["ml"] == 90
 
     def test_start_text_format(self, handler):
         """Log entry text follows 'NNml @ HH:MM AM/PM' format."""
