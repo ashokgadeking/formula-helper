@@ -232,7 +232,7 @@ def _restore_state_from_log():
         return
 
     try:
-        mixed_dt = datetime.strptime(date_str, "%Y-%m-%d %I:%M %p")
+        mixed_dt = datetime.strptime(date_str, "%Y-%m-%d %I:%M %p").replace(tzinfo=CT)
         mixed_at_str = mixed_dt.strftime("%I:%M %p")
         mixed_ml = int(latest.get("ml", 0))
         countdown_end = mixed_dt.timestamp() + countdown_secs
