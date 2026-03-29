@@ -112,6 +112,21 @@ def _put_timer_state(countdown_end, mixed_at_str, mixed_ml, ntfy_sent):
     })
 
 
+def _get_weight_log():
+    """Return list of weight entries [{date, lbs}] sorted by date."""
+    resp = table.get_item(Key={"PK": "WEIGHT", "SK": "DATA"})
+    item = resp.get("Item")
+    if not item:
+        return []
+    import json as _json
+    return _json.loads(item.get("entries", "[]"))
+
+def _put_weight_log(entries):
+    """Store weight entries list to DynamoDB."""
+    import json as _json
+    table.put_item(Item={"PK": "WEIGHT", "SK": "DATA", "entries": _json.dumps(entries)})
+
+
 def _get_settings():
     resp = table.get_item(Key={"PK": "STATE", "SK": "SETTINGS"})
     item = resp.get("Item", {})
@@ -623,6 +638,7 @@ def get_state(event):
         "settings": settings,
         "combos": [[w, round(p, 2)] for w, p in COMBOS],
         "powder_per_60": POWDER_PER_60ML,
+        "weight_log": _get_weight_log(),
     })
 
 
@@ -782,6 +798,24 @@ def delete_log(event):
     return _json_response({"ok": True})
 
 
+def post_weight(event):
+    """Upload weight log. Body: {entries: [{date: 'YYYY-MM-DD', lbs: float}]}"""
+    data = _parse_body(event)
+    entries = data.get("entries", [])
+    if not isinstance(entries, list):
+        return _json_response({"ok": False, "error": "entries must be a list"}, 400)
+    # Validate and clean
+    cleaned = []
+    for e in entries:
+        try:
+            cleaned.append({"date": str(e["date"]), "lbs": float(e["lbs"])})
+        except (KeyError, ValueError, TypeError):
+            continue
+    cleaned.sort(key=lambda x: x["date"])
+    _put_weight_log(cleaned)
+    return _json_response({"ok": True, "count": len(cleaned)})
+
+
 def post_reset_timer(event):
     _put_timer_state(0.0, "", 0, False)
     return _json_response({"ok": True})
@@ -824,6 +858,7 @@ PROTECTED_ROUTES = {
     "DELETE /api/log/{sk}": delete_log,
     "POST /api/reset-timer": post_reset_timer,
     "POST /api/settings": post_settings,
+    "POST /api/weight": post_weight,
 }
 
 

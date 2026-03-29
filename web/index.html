@@ -152,6 +152,7 @@ input{-webkit-user-select:text;user-select:text}
   background:var(--card);color:var(--dim);border:1px solid var(--border);
   letter-spacing:.5px}
 .trends-tab.active{background:var(--blue-bg);color:var(--blue);border-color:var(--blue-border)}
+#weight-toggle-btn.active{background:var(--green-bg);color:var(--green);border-color:var(--green-border)}
 .trends-chart{flex:1;padding:8px 14px;position:relative;min-height:0;overflow:hidden}
 .trends-chart canvas{position:absolute;top:0;left:14px;right:14px;bottom:8px;
   width:calc(100% - 28px)!important;height:calc(100% - 8px)!important}
@@ -318,6 +319,7 @@ input{-webkit-user-select:text;user-select:text}
     <button class="trends-tab" onclick="setTrendRange('month',this)">Month</button>
     <button class="trends-tab" onclick="setTrendRange('year',this)">Year</button>
     <button class="trends-tab" onclick="setTrendRange('all',this)">All</button>
+    <button id="weight-toggle-btn" class="trends-tab" onclick="toggleWeightOverlay(this)" style="margin-left:auto">⚖ Weight</button>
   </div>
   <div class="trends-summary" id="trends-summary">
     <div class="trends-stat"><div class="trends-stat-val" id="ts-total">0</div><div class="trends-stat-lbl">TOTAL ML</div></div>
@@ -325,7 +327,10 @@ input{-webkit-user-select:text;user-select:text}
     <div class="trends-stat"><div class="trends-stat-val" id="ts-avg">0</div><div class="trends-stat-lbl">AVG ML/DAY</div></div>
   </div>
   <div class="trends-chart"><canvas id="trends-canvas"></canvas></div>
-  <div class="bottom-bar single"><button onclick="showScreen('log')">Back</button></div>
+  <div class="bottom-bar split">
+    <button onclick="showScreen('log')">Back</button>
+    <button onclick="document.getElementById('weight-csv-input').click()" style="background:var(--card);color:var(--dim);font-size:.8rem">Upload Weight CSV</button>
+  </div>
 </div>
 
 <!-- ── Modal for edit / leftover ─────────────────── -->
@@ -422,6 +427,8 @@ let calcWater = 90;
 const POWDER_PER_60 = 8.3;
 let trendRange = 'week';
 let trendChart = null;
+let weightData = [];       // [{date: 'YYYY-MM-DD', lbs: float}] from state
+let showWeight = false;    // toggle for weight overlay
 
 function showScreen(name) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
@@ -860,6 +867,70 @@ async function adjSS(dir) {
   updateSettings();
 }
 
+// ── Weight overlay ───────────────────────────────
+function toggleWeightOverlay(btn) {
+  showWeight = !showWeight;
+  btn.classList.toggle('active', showWeight);
+  updateTrends();
+}
+
+function handleWeightCsvUpload(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async e => {
+    const entries = parseWeightCsv(e.target.result);
+    if (!entries.length) { alert('No weight entries found in CSV.'); return; }
+    try {
+      const r = await fetch(API_BASE + '/api/weight', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({entries}),
+        credentials: 'include',
+      });
+      if (!r.ok) throw new Error('Upload failed');
+      const data = await r.json();
+      await pollState();
+      updateTrends();
+      alert(`Uploaded ${data.count} weight entries.`);
+    } catch(err) {
+      alert('Upload failed: ' + err.message);
+    }
+    input.value = '';
+  };
+  reader.readAsText(file);
+}
+
+function parseWeightCsv(text) {
+  const lines = text.trim().split('\n');
+  if (lines.length < 2) return [];
+  const headers = lines[0].split(',');
+  const typeIdx = headers.indexOf('type');
+  const tsIdx = headers.indexOf('timestamp');
+  const wtIdx = headers.findIndex(h => h.includes('weight') && !h.includes('length'));
+  if (typeIdx < 0 || tsIdx < 0 || wtIdx < 0) return [];
+  const entries = [];
+  for (let i = 1; i < lines.length; i++) {
+    // Split carefully — note field is quoted for note
+    const cols = lines[i].split(',');
+    if (!cols[typeIdx] || cols[typeIdx].trim() !== 'weight') continue;
+    const lbs = parseFloat(cols[wtIdx]);
+    if (!lbs || isNaN(lbs)) continue;
+    const ts = new Date(cols[tsIdx].trim());
+    if (isNaN(ts.getTime())) continue;
+    const date = localDateStr(ts);
+    // Keep the most recent entry per date
+    const existing = entries.findIndex(e => e.date === date);
+    if (existing >= 0) {
+      if (ts > new Date(entries[existing]._ts)) entries[existing] = {date, lbs, _ts: ts.toISOString()};
+    } else {
+      entries.push({date, lbs, _ts: ts.toISOString()});
+    }
+  }
+  // Strip internal _ts field
+  return entries.map(({date, lbs}) => ({date, lbs}));
+}
+
 // ── Trends ──────────────────────────────────────
 function setTrendRange(range, btn) {
   trendRange = range;
@@ -925,12 +996,14 @@ function updateTrends() {
   const labels = [];
   const dataConsumed = [];
   const dataLeftover = [];
+  const isoLabels = [];
   const days = Object.keys(dailyTotal).sort();
   if (days.length > 0) {
     let cur = new Date(days[0] + 'T00:00:00');
     const end = new Date(days[days.length - 1] + 'T00:00:00');
     while (cur <= end) {
       const k = localDateStr(cur);
+      isoLabels.push(k);
       labels.push(formatChartDateLabel(k));
       const total = dailyTotal[k] || 0;
       const lo = dailyLeftover[k] || 0;
@@ -940,6 +1013,11 @@ function updateTrends() {
     }
   }
 
+  // Build weight overlay — align to chart date labels
+  const weightByDate = {};
+  for (const w of weightData) weightByDate[w.date] = w.lbs;
+  const dataWeight = isoLabels.map(d => weightByDate[d] != null ? weightByDate[d] : null);
+
   const numDays = Math.max(1, days.length);
   document.getElementById('ts-total').textContent = totalMl;
   document.getElementById('ts-count').textContent = count;
@@ -948,25 +1026,47 @@ function updateTrends() {
   // Chart
   const ctx = document.getElementById('trends-canvas');
   if (trendChart) trendChart.destroy();
+
+  const datasets = [
+    {
+      label: 'Consumed',
+      data: dataConsumed,
+      backgroundColor: 'rgba(90,170,255,0.5)',
+      borderColor: 'rgba(90,170,255,0.8)',
+      borderWidth: 1,
+      borderRadius: {topLeft: 0, topRight: 0, bottomLeft: 6, bottomRight: 6},
+      stack: 'ml',
+    },{
+      label: 'Leftover',
+      data: dataLeftover,
+      backgroundColor: 'rgba(255,200,55,0.5)',
+      borderColor: 'rgba(255,200,55,0.7)',
+      borderWidth: 1,
+      borderRadius: {topLeft: 6, topRight: 6, bottomLeft: 0, bottomRight: 0},
+      stack: 'ml',
+    }
+  ];
+  if (showWeight && weightData.length) {
+    datasets.push({
+      label: 'Weight (lbs)',
+      data: dataWeight,
+      type: 'line',
+      yAxisID: 'y1',
+      borderColor: 'rgba(180,120,255,0.9)',
+      backgroundColor: 'rgba(180,120,255,0.15)',
+      borderWidth: 2,
+      pointRadius: 4,
+      pointBackgroundColor: 'rgba(180,120,255,0.9)',
+      spanGaps: true,
+      tension: 0.3,
+    });
+  }
+
   trendChart = new Chart(ctx, {
     type: 'bar',
     data: {
       labels: labels,
-      datasets: [{
-        label: 'Consumed',
-        data: dataConsumed,
-        backgroundColor: 'rgba(90,170,255,0.5)',
-        borderColor: 'rgba(90,170,255,0.8)',
-        borderWidth: 1,
-        borderRadius: {topLeft: 0, topRight: 0, bottomLeft: 6, bottomRight: 6},
-      },{
-        label: 'Leftover',
-        data: dataLeftover,
-        backgroundColor: 'rgba(255,200,55,0.5)',
-        borderColor: 'rgba(255,200,55,0.7)',
-        borderWidth: 1,
-        borderRadius: {topLeft: 6, topRight: 6, bottomLeft: 0, bottomRight: 0},
-      }]
+      datasets: datasets,
     },
     options: {
       responsive: true,
@@ -996,7 +1096,14 @@ function updateTrends() {
           beginAtZero: true,
           ticks: {color: '#4a4a62', font: {family: 'Outfit', weight: '500'}, callback: v => v + 'ml'},
           grid: {color: 'rgba(255,255,255,0.03)'}
-        }
+        },
+        y1: showWeight && weightData.length ? {
+          type: 'linear',
+          position: 'right',
+          beginAtZero: false,
+          ticks: {color: '#4a4a62', font: {family: 'Outfit', weight: '500'}, callback: v => v + ' lbs'},
+          grid: {drawOnChartArea: false},
+        } : {display: false},
       }
     }
   });
@@ -1020,6 +1127,7 @@ async function pollState() {
       return;
     }
     state = await r.json();
+    if (state.weight_log) weightData = state.weight_log;
     updateMain();
     updateSamples();
     updateSettings();
@@ -1458,5 +1566,6 @@ async function checkPiAuth() {
   updateCalc();
 })();
 </script>
+<input type="file" id="weight-csv-input" accept=".csv" style="display:none" onchange="handleWeightCsvUpload(this)">
 </body>
 </html>

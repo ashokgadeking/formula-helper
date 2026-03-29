@@ -141,6 +141,12 @@ Resources:
             Path: /api/push/unsubscribe
             Method: POST
             ApiId: !Ref FormulaApi
+        PostWeight:
+          Type: HttpApi
+          Properties:
+            Path: /api/weight
+            Method: POST
+            ApiId: !Ref FormulaApi
 
   # ── HTTP API ────────────────────────────────────────────────────────────────
   FormulaApi:
