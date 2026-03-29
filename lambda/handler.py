@@ -805,10 +805,14 @@ def post_settings(event):
 # Auth routes (no session required)
 AUTH_ROUTES = {
     "GET /api/auth/status": auth_status,
-    "POST /api/auth/register-options": auth_register_options,
-    "POST /api/auth/register-verify": auth_register_verify,
     "POST /api/auth/login-options": auth_login_options,
     "POST /api/auth/login-verify": auth_login_verify,
+}
+
+# Registration is session-protected UNLESS no credentials exist yet (first-time setup)
+REGISTER_ROUTES = {
+    "POST /api/auth/register-options": auth_register_options,
+    "POST /api/auth/register-verify": auth_register_verify,
 }
 
 # Protected routes (session required)
@@ -830,6 +834,17 @@ def lambda_handler(event, context):
     if route_key in AUTH_ROUTES:
         try:
             return AUTH_ROUTES[route_key](event)
+        except Exception as e:
+            return _json_response({"error": str(e)}, 500)
+
+    # Registration — open only for first-time setup; requires session after that
+    if route_key in REGISTER_ROUTES:
+        try:
+            if _has_any_credentials():
+                token = _get_session_from_event(event)
+                if not _validate_session(token):
+                    return _json_response({"error": "Unauthorized"}, 401)
+            return REGISTER_ROUTES[route_key](event)
         except Exception as e:
             return _json_response({"error": str(e)}, 500)
 

@@ -126,6 +126,44 @@ class TestRouteProtection:
         assert status == 200
 
 
+class TestRegistrationRestriction:
+    def test_register_open_when_no_creds(self, handler):
+        """Registration options are accessible with no session when no creds exist yet."""
+        event = make_event("POST /api/auth/register-options", body={"username": "Ashok"})
+        status, _ = parse_response(handler.lambda_handler(event, None))
+        assert status == 200
+
+    def test_register_blocked_without_session_when_creds_exist(self, handler, table):
+        """Registration is blocked without a session once any credential exists."""
+        table.put_item(Item={
+            "PK": "AUTH", "SK": "CRED#test-cred",
+            "credential_id": "test-cred", "public_key": "test-key",
+            "sign_count": 0, "user_name": "Ashok",
+        })
+        event = make_event("POST /api/auth/register-options", body={"username": "NewUser"})
+        status, body = parse_response(handler.lambda_handler(event, None))
+        assert status == 401
+
+    def test_register_allowed_with_valid_session_when_creds_exist(self, handler, table):
+        """Registration is allowed with a valid session even after creds exist."""
+        table.put_item(Item={
+            "PK": "AUTH", "SK": "CRED#test-cred",
+            "credential_id": "test-cred", "public_key": "test-key",
+            "sign_count": 0, "user_name": "Ashok",
+        })
+        token = "valid-token"
+        table.put_item(Item={
+            "PK": "AUTH", "SK": f"SESSION#{token}",
+            "expires": int(time.time()) + 86400,
+            "user_name": "Ashok",
+        })
+        event = make_event("POST /api/auth/register-options",
+                          body={"username": "Ashok"},
+                          cookies=[f"session={token}"])
+        status, _ = parse_response(handler.lambda_handler(event, None))
+        assert status == 200
+
+
 class TestUnknownRoute:
     def test_unknown_route_returns_404(self, handler):
         """Unknown route returns 404."""
