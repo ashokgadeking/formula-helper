@@ -992,15 +992,29 @@ function updateTrends() {
     count++;
   }
 
-  // Fill in missing dates
+  // Fill in missing dates — when weight overlay active, extend range to cover weight dates too
   const labels = [];
   const dataConsumed = [];
   const dataLeftover = [];
   const isoLabels = [];
   const days = Object.keys(dailyTotal).sort();
-  if (days.length > 0) {
-    let cur = new Date(days[0] + 'T00:00:00');
-    const end = new Date(days[days.length - 1] + 'T00:00:00');
+  const weightByDate = {};
+  for (const w of weightData) weightByDate[w.date] = w.lbs;
+
+  // Determine date range: union of consumption dates and (if showWeight) weight dates within cutoff
+  let rangeStart = days[0] || null;
+  let rangeEnd = days[days.length - 1] || null;
+  if (showWeight && weightData.length) {
+    const visibleWeightDates = weightData.map(w => w.date).filter(d => !cutoff || new Date(d + 'T00:00:00') >= cutoff);
+    if (visibleWeightDates.length) {
+      if (!rangeStart || visibleWeightDates[0] < rangeStart) rangeStart = visibleWeightDates[0];
+      if (!rangeEnd || visibleWeightDates[visibleWeightDates.length - 1] > rangeEnd) rangeEnd = visibleWeightDates[visibleWeightDates.length - 1];
+    }
+  }
+
+  if (rangeStart) {
+    let cur = new Date(rangeStart + 'T00:00:00');
+    const end = new Date(rangeEnd + 'T00:00:00');
     while (cur <= end) {
       const k = localDateStr(cur);
       isoLabels.push(k);
@@ -1013,9 +1027,6 @@ function updateTrends() {
     }
   }
 
-  // Build weight overlay — align to chart date labels
-  const weightByDate = {};
-  for (const w of weightData) weightByDate[w.date] = w.lbs;
   const dataWeight = isoLabels.map(d => weightByDate[d] != null ? weightByDate[d] : null);
 
   const numDays = Math.max(1, days.length);
