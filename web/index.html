@@ -917,10 +917,13 @@ function parseGreaterGoodsTimestamp(str) {
   return new Date(`${year}-${mo}-${d}T${hh}:${min}:${sec}${tz}`);
 }
 
+function csvCol(cols, idx) {
+  return (cols[idx] || '').replace(/^"|"$/g, '').trim();
+}
 function parseWeightCsv(text) {
   const lines = text.trim().split('\n');
   if (lines.length < 2) return [];
-  const headers = lines[0].split(',');
+  const headers = lines[0].split(',').map(h => h.replace(/^"|"$/g, '').trim());
   const typeIdx = headers.indexOf('type');
   const tsIdx = headers.indexOf('timestamp');
   const wtIdx = headers.findIndex(h => h.includes('weight') && !h.includes('length'));
@@ -928,10 +931,10 @@ function parseWeightCsv(text) {
   const entries = [];
   for (let i = 1; i < lines.length; i++) {
     const cols = lines[i].split(',');
-    if (!cols[typeIdx] || cols[typeIdx].trim() !== 'weight') continue;
-    const lbs = parseFloat(cols[wtIdx]);
+    if (csvCol(cols, typeIdx) !== 'weight') continue;
+    const lbs = parseFloat(csvCol(cols, wtIdx));
     if (!lbs || isNaN(lbs)) continue;
-    const ts = parseGreaterGoodsTimestamp(cols[tsIdx]);
+    const ts = parseGreaterGoodsTimestamp(csvCol(cols, tsIdx));
     if (!ts || isNaN(ts.getTime())) continue;
     const date = localDateStr(ts);
     const existing = entries.findIndex(e => e.date === date);
