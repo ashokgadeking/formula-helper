@@ -901,6 +901,22 @@ function handleWeightCsvUpload(input) {
   reader.readAsText(file);
 }
 
+function parseGreaterGoodsTimestamp(str) {
+  // Parses "Oct 09 2025 12:00:00 AM -05:00" → Date
+  const MONTHS = {Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
+  const m = str.trim().match(/^(\w{3})\s+(\d{1,2})\s+(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})\s+(AM|PM)\s+([+-]\d{2}:\d{2})$/);
+  if (!m) return null;
+  const [,mon,day,year,hr,min,sec,ampm,tz] = m;
+  if (!(mon in MONTHS)) return null;
+  let h = parseInt(hr);
+  if (ampm === 'AM' && h === 12) h = 0;
+  else if (ampm === 'PM' && h !== 12) h += 12;
+  const mo = String(MONTHS[mon] + 1).padStart(2, '0');
+  const d = day.padStart(2, '0');
+  const hh = String(h).padStart(2, '0');
+  return new Date(`${year}-${mo}-${d}T${hh}:${min}:${sec}${tz}`);
+}
+
 function parseWeightCsv(text) {
   const lines = text.trim().split('\n');
   if (lines.length < 2) return [];
@@ -911,15 +927,13 @@ function parseWeightCsv(text) {
   if (typeIdx < 0 || tsIdx < 0 || wtIdx < 0) return [];
   const entries = [];
   for (let i = 1; i < lines.length; i++) {
-    // Split carefully — note field is quoted for note
     const cols = lines[i].split(',');
     if (!cols[typeIdx] || cols[typeIdx].trim() !== 'weight') continue;
     const lbs = parseFloat(cols[wtIdx]);
     if (!lbs || isNaN(lbs)) continue;
-    const ts = new Date(cols[tsIdx].trim());
-    if (isNaN(ts.getTime())) continue;
+    const ts = parseGreaterGoodsTimestamp(cols[tsIdx]);
+    if (!ts || isNaN(ts.getTime())) continue;
     const date = localDateStr(ts);
-    // Keep the most recent entry per date
     const existing = entries.findIndex(e => e.date === date);
     if (existing >= 0) {
       if (ts > new Date(entries[existing]._ts)) entries[existing] = {date, lbs, _ts: ts.toISOString()};
@@ -927,7 +941,6 @@ function parseWeightCsv(text) {
       entries.push({date, lbs, _ts: ts.toISOString()});
     }
   }
-  // Strip internal _ts field
   return entries.map(({date, lbs}) => ({date, lbs}));
 }
 
