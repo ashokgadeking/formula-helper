@@ -147,6 +147,18 @@ Resources:
             Path: /api/weight
             Method: POST
             ApiId: !Ref FormulaApi
+        PostDiaper:
+          Type: HttpApi
+          Properties:
+            Path: /api/diaper
+            Method: POST
+            ApiId: !Ref FormulaApi
+        DeleteDiaper:
+          Type: HttpApi
+          Properties:
+            Path: /api/diaper/{sk}
+            Method: DELETE
+            ApiId: !Ref FormulaApi
 
   # ── HTTP API ────────────────────────────────────────────────────────────────
   FormulaApi:

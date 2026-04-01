@@ -163,6 +163,33 @@ def _get_all_log_entries():
     return _decimal_to_native(items)
 
 
+def _get_all_diaper_entries():
+    """Query all DIAPER_LOG entries, sorted by SK."""
+    items = []
+    resp = table.query(
+        KeyConditionExpression=Key("PK").eq("DIAPER_LOG"),
+        ScanIndexForward=True,
+    )
+    items.extend(resp.get("Items", []))
+    while resp.get("LastEvaluatedKey"):
+        resp = table.query(
+            KeyConditionExpression=Key("PK").eq("DIAPER_LOG"),
+            ScanIndexForward=True,
+            ExclusiveStartKey=resp["LastEvaluatedKey"],
+        )
+        items.extend(resp.get("Items", []))
+    return _decimal_to_native(items)
+
+
+def _diaper_entry_to_api(item):
+    return {
+        "sk": item["SK"],
+        "type": item.get("type", ""),
+        "date": item.get("date", ""),
+        "created_by": item.get("created_by", ""),
+    }
+
+
 def _log_entry_to_api(item):
     """Convert DynamoDB log item to API response format."""
     return {
@@ -639,6 +666,7 @@ def get_state(event):
         "combos": [[w, round(p, 2)] for w, p in COMBOS],
         "powder_per_60": POWDER_PER_60ML,
         "weight_log": _get_weight_log(),
+        "diaper_log": [_diaper_entry_to_api(e) for e in _get_all_diaper_entries()],
     })
 
 
@@ -816,6 +844,43 @@ def post_weight(event):
     return _json_response({"ok": True, "count": len(cleaned)})
 
 
+def post_diaper(event):
+    data = _parse_body(event)
+    diaper_type = data.get("type", "").lower()
+    if diaper_type not in ("pee", "poo"):
+        return _json_response({"ok": False, "error": "type must be pee or poo"}, 400)
+
+    token = _get_session_from_event(event)
+    session = _validate_session(token)
+    if session:
+        user_name = session["user_name"]
+    elif event.get("headers", {}).get("x-api-key") == PI_API_KEY:
+        user_name = "Pi"
+    else:
+        user_name = ""
+
+    now = _now_ct()
+    date_str = now.strftime("%Y-%m-%d %I:%M %p")
+    sk = now.strftime("%Y-%m-%d") + "#" + f"{time.time():.3f}"
+
+    table.put_item(Item={
+        "PK": "DIAPER_LOG",
+        "SK": sk,
+        "type": diaper_type,
+        "date": date_str,
+        "created_by": user_name,
+    })
+    return _json_response({"ok": True, "sk": sk})
+
+
+def delete_diaper(event):
+    sk = (event.get("pathParameters") or {}).get("sk", "")
+    if not sk:
+        return _json_response({"ok": False, "error": "missing sk"}, 400)
+    table.delete_item(Key={"PK": "DIAPER_LOG", "SK": sk})
+    return _json_response({"ok": True})
+
+
 def post_reset_timer(event):
     _put_timer_state(0.0, "", 0, False)
     return _json_response({"ok": True})
@@ -859,6 +924,8 @@ PROTECTED_ROUTES = {
     "POST /api/reset-timer": post_reset_timer,
     "POST /api/settings": post_settings,
     "POST /api/weight": post_weight,
+    "POST /api/diaper": post_diaper,
+    "DELETE /api/diaper/{sk}": delete_diaper,
 }
 
 

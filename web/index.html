@@ -70,6 +70,7 @@ button:active{transform:scale(.96);filter:brightness(.85)}
 .start-btn .ml-unit{font-size:.6rem;opacity:.4;display:block;font-weight:500;letter-spacing:.5px;margin-top:3px}
 .log-btn{background:var(--yellow-bg)!important;color:var(--yellow)!important}
 .samples-btn{background:var(--blue-bg)!important;color:var(--blue)!important}
+.diaper-btn{background:rgba(255,140,30,.08)!important;color:#ff8c1a!important}
 .custom-btn{background:var(--purple-bg)!important;color:var(--purple)!important}
 
 /* ── Samples screen ─────────────────────────────── */
@@ -203,6 +204,23 @@ input{-webkit-user-select:text;user-select:text}
 .log-list::-webkit-scrollbar-track{background:transparent}
 .log-list::-webkit-scrollbar-thumb{background:var(--dim2);border-radius:3px}
 
+/* ── Diaper picker ──────────────────────────────── */
+.diaper-picker{flex:1;display:flex;flex-direction:column;gap:1px;background:var(--border)}
+.diaper-action-btn{flex:1;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;border:none;cursor:pointer;font-family:var(--font);
+  -webkit-tap-highlight-color:transparent;transition:filter .1s ease}
+.diaper-action-btn:active{filter:brightness(.8)}
+.diaper-action-btn .d-emoji{font-size:5rem;line-height:1;margin-bottom:18px}
+.diaper-action-btn .d-label{font-size:1.8rem;font-weight:700;letter-spacing:.5px}
+.diaper-action-btn .d-count{font-size:.8rem;font-weight:500;letter-spacing:1px;margin-top:8px;opacity:.7}
+.diaper-pee{background:rgba(255,200,55,.06);color:var(--yellow)}
+.diaper-poo{background:rgba(200,121,65,.08);color:#c87941}
+.diaper-toast{position:absolute;top:16px;left:50%;transform:translateX(-50%);
+  padding:10px 22px;border-radius:20px;font-size:.85rem;font-weight:600;
+  letter-spacing:.3px;pointer-events:none;opacity:0;transition:opacity .2s;z-index:50;
+  white-space:nowrap}
+.diaper-toast.show{opacity:1}
+
 /* ── Progress bar ──────────────────────────────── */
 .progress-track{position:absolute;top:0;left:0;right:0;height:5px;
   background:rgba(255,255,255,.04);overflow:hidden}
@@ -281,7 +299,7 @@ input{-webkit-user-select:text;user-select:text}
     <button class="start-btn" onclick="startTimer(100)"><span class="num">100</span><span class="ml-unit">ml</span></button>
     <button class="start-btn" onclick="startTimer(120)"><span class="num">120</span><span class="ml-unit">ml</span></button>
     <button class="log-btn" onclick="showScreen('log')">Log</button>
-    <button class="samples-btn" onclick="showScreen('samples')">Sample Sizes</button>
+    <button class="diaper-btn" onclick="showScreen('diaper')">Diaper</button>
     <button class="custom-btn" onclick="showScreen('calculator')">Custom Amount</button>
   </div>
 </div>
@@ -290,6 +308,64 @@ input{-webkit-user-select:text;user-select:text}
 <div id="samples-screen" class="screen">
   <div class="samples-grid" id="samples-grid"></div>
   <div class="bottom-bar single"><button onclick="showScreen('main')">Back</button></div>
+</div>
+
+<!-- ══ DIAPER PICKER ══════════════════════════════ -->
+<div id="diaper-screen" class="screen" style="position:relative">
+  <div class="diaper-picker">
+    <button class="diaper-action-btn diaper-pee" onclick="logDiaper('pee')">
+      <span class="d-emoji">💛</span>
+      <span class="d-label">PEE</span>
+      <span class="d-count" id="diaper-pee-today"></span>
+    </button>
+    <button class="diaper-action-btn diaper-poo" onclick="logDiaper('poo')">
+      <span class="d-emoji">💩</span>
+      <span class="d-label">POO</span>
+      <span class="d-count" id="diaper-poo-today"></span>
+    </button>
+  </div>
+  <div class="diaper-toast" id="diaper-toast"></div>
+  <div class="bottom-bar split">
+    <button onclick="showScreen('main')">Back</button>
+    <button onclick="showScreen('diaper-log')" style="background:var(--yellow-bg);color:var(--yellow)">Log</button>
+  </div>
+</div>
+
+<!-- ══ DIAPER LOG ═════════════════════════════════ -->
+<div id="diaper-log-screen" class="screen">
+  <div class="log-header">
+    <button id="diaper-log-prev" class="log-nav-btn" onclick="diaperLogNav(-1)">&lt;</button>
+    <div style="text-align:center">
+      <div class="log-title" id="diaper-log-date-label" style="padding:0">Today</div>
+      <div id="diaper-log-count" style="font-size:.65rem;color:var(--dim);font-weight:500;letter-spacing:.5px"></div>
+    </div>
+    <button id="diaper-log-next" class="log-nav-btn" onclick="diaperLogNav(1)">&gt;</button>
+  </div>
+  <div class="log-list" id="diaper-log-list"></div>
+  <div class="bottom-bar split">
+    <button onclick="showScreen('diaper')">Back</button>
+    <button onclick="showScreen('diaper-trends')" style="background:var(--blue-bg);color:var(--blue)">Trends</button>
+  </div>
+</div>
+
+<!-- ══ DIAPER TRENDS ══════════════════════════════ -->
+<div id="diaper-trends-screen" class="screen">
+  <div class="trends-title">DIAPER TRENDS</div>
+  <div class="trends-tabs">
+    <button class="trends-tab active" onclick="setDiaperTrendRange('week',this)">Week</button>
+    <button class="trends-tab" onclick="setDiaperTrendRange('month',this)">Month</button>
+    <button class="trends-tab" onclick="setDiaperTrendRange('year',this)">Year</button>
+    <button class="trends-tab" onclick="setDiaperTrendRange('all',this)">All</button>
+  </div>
+  <div class="trends-summary" id="diaper-trends-summary">
+    <div class="trends-stat"><div class="trends-stat-val" id="dt-total">0</div><div class="trends-stat-lbl">TOTAL</div></div>
+    <div class="trends-stat"><div class="trends-stat-val" id="dt-pee" style="color:var(--yellow)">0</div><div class="trends-stat-lbl">💛 PEE</div></div>
+    <div class="trends-stat"><div class="trends-stat-val" id="dt-poo" style="color:#c87941">0</div><div class="trends-stat-lbl">💩 POO</div></div>
+  </div>
+  <div class="trends-chart"><canvas id="diaper-trends-canvas"></canvas></div>
+  <div class="bottom-bar single">
+    <button onclick="showScreen('diaper-log')">Back</button>
+  </div>
 </div>
 
 <!-- ══ LOG ════════════════════════════════════════ -->
@@ -437,6 +513,9 @@ function showScreen(name) {
   if (name === 'main') pollState();
   if (name === 'log') { const dates=getLogDates(); logViewDate=dates.length?dates[dates.length-1]:localDateStr(new Date()); updateLog(); }
   if (name === 'trends') { pollState().then(() => updateTrends()); }
+  if (name === 'diaper') updateDiaperCounts();
+  if (name === 'diaper-log') { const dates=getDiaperLogDates(); diaperLogViewDate=dates.length?dates[dates.length-1]:localDateStr(new Date()); updateDiaperLog(); }
+  if (name === 'diaper-trends') updateDiaperTrends();
 }
 
 function pad2(n) { return String(n).padStart(2, '0'); }
@@ -947,6 +1026,236 @@ function parseWeightCsv(text) {
   return entries.map(({date, lbs}) => ({date, lbs}));
 }
 
+// ── Diaper ──────────────────────────────────────
+let diaperLog = [];
+let diaperLogViewDate = '';
+let diaperTrendRange = 'week';
+let diaperTrendChart = null;
+
+function getDiaperLogDates() {
+  const s = new Set();
+  diaperLog.forEach(e => { const d = (e.date || '').split(' ')[0]; if (d) s.add(d); });
+  return [...s].sort();
+}
+
+function updateDiaperCounts() {
+  const today = localDateStr(new Date());
+  let pee = 0, poo = 0;
+  diaperLog.forEach(e => {
+    if ((e.date || '').startsWith(today)) {
+      if (e.type === 'pee') pee++;
+      else if (e.type === 'poo') poo++;
+    }
+  });
+  document.getElementById('diaper-pee-today').textContent = pee ? pee + ' today' : '';
+  document.getElementById('diaper-poo-today').textContent = poo ? poo + ' today' : '';
+}
+
+async function logDiaper(type) {
+  const r = await fetch(API_BASE + '/api/diaper', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({type}),
+  });
+  if (!r.ok) return;
+  const data = await r.json();
+  const now = new Date();
+  const entry = {
+    sk: data.sk,
+    type,
+    date: localDateStr(now) + ' ' + now.toLocaleTimeString('en-US', {hour:'numeric',minute:'2-digit'}),
+    created_by: '',
+  };
+  diaperLog.push(entry);
+  diaperLog.sort((a, b) => a.sk < b.sk ? -1 : 1);
+  updateDiaperCounts();
+
+  // Toast feedback
+  const toast = document.getElementById('diaper-toast');
+  toast.textContent = type === 'pee' ? '💛 Pee logged!' : '💩 Poo logged!';
+  toast.style.background = type === 'pee' ? 'rgba(255,200,55,.15)' : 'rgba(200,121,65,.15)';
+  toast.style.color = type === 'pee' ? 'var(--yellow)' : '#c87941';
+  toast.style.border = '1px solid ' + (type === 'pee' ? 'rgba(255,200,55,.3)' : 'rgba(200,121,65,.3)');
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 1800);
+}
+
+function diaperLogNav(dir) {
+  const dates = getDiaperLogDates();
+  const idx = dates.indexOf(diaperLogViewDate);
+  if (dir < 0 && idx > 0) diaperLogViewDate = dates[idx - 1];
+  else if (dir > 0 && idx < dates.length - 1) diaperLogViewDate = dates[idx + 1];
+  updateDiaperLog();
+}
+
+function updateDiaperLog() {
+  const list = document.getElementById('diaper-log-list');
+  list.innerHTML = '';
+  document.getElementById('diaper-log-date-label').textContent = formatDateLabel(diaperLogViewDate);
+
+  const dates = getDiaperLogDates();
+  const idx = dates.indexOf(diaperLogViewDate);
+  document.getElementById('diaper-log-prev').style.visibility = idx > 0 ? 'visible' : 'hidden';
+  document.getElementById('diaper-log-next').style.visibility = idx >= 0 && idx < dates.length - 1 ? 'visible' : 'hidden';
+
+  const filtered = diaperLog.filter(e => (e.date || '').startsWith(diaperLogViewDate));
+  document.getElementById('diaper-log-count').textContent =
+    filtered.length ? filtered.length + ' diaper' + (filtered.length !== 1 ? 's' : '') : '';
+
+  if (!filtered.length) {
+    list.innerHTML = '<div class="log-empty">No diapers recorded for this day</div>';
+    return;
+  }
+
+  for (let i = filtered.length - 1; i >= 0; i--) {
+    const e = filtered[i];
+    const isPee = e.type === 'pee';
+    const timeStr = (e.date || '').replace(/^\d{4}-\d{2}-\d{2}\s*/, '');
+    const card = document.createElement('div');
+    card.className = 'log-card';
+
+    const num = document.createElement('div');
+    num.className = 'log-num';
+    num.textContent = i + 1;
+
+    const info = document.createElement('div');
+    info.className = 'log-info';
+    const textDiv = document.createElement('div');
+    textDiv.className = 'log-text';
+    textDiv.style.color = isPee ? 'var(--yellow)' : '#c87941';
+    textDiv.textContent = (isPee ? '💛 Pee' : '💩 Poo') + (timeStr ? ' @ ' + timeStr : '');
+    info.appendChild(textDiv);
+
+    const eskQ = e.sk.replace(/'/g, "\\'");
+    const actions = document.createElement('div');
+    actions.className = 'log-actions';
+    actions.innerHTML = '<button class="log-act del-btn" onclick="deleteDiaperEntry(\''+eskQ+'\')" title="Delete">&#10005;</button>';
+
+    card.appendChild(num);
+    card.appendChild(info);
+    card.appendChild(actions);
+    list.appendChild(card);
+  }
+}
+
+async function deleteDiaperEntry(sk) {
+  if (!confirm('Delete this entry?')) return;
+  await fetch(API_BASE + '/api/diaper/' + encodeURIComponent(sk), {method: 'DELETE'});
+  diaperLog = diaperLog.filter(e => e.sk !== sk);
+  updateDiaperLog();
+  updateDiaperCounts();
+}
+
+function setDiaperTrendRange(range, btn) {
+  diaperTrendRange = range;
+  document.querySelectorAll('#diaper-trends-screen .trends-tab').forEach(t => t.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  updateDiaperTrends();
+}
+
+function updateDiaperTrends() {
+  const now = new Date();
+  let cutoff;
+  if (diaperTrendRange === 'week') cutoff = new Date(now - 7 * 86400000);
+  else if (diaperTrendRange === 'month') cutoff = new Date(now - 30 * 86400000);
+  else if (diaperTrendRange === 'year') cutoff = new Date(now - 365 * 86400000);
+  else cutoff = new Date(0);
+
+  const dailyPee = {}, dailyPoo = {};
+  let totalPee = 0, totalPoo = 0;
+
+  for (const e of diaperLog) {
+    const dateKey = (e.date || '').split(' ')[0];
+    if (!dateKey) continue;
+    const d = new Date(dateKey + 'T00:00:00');
+    if (d < cutoff) continue;
+    if (e.type === 'pee') { dailyPee[dateKey] = (dailyPee[dateKey] || 0) + 1; totalPee++; }
+    else if (e.type === 'poo') { dailyPoo[dateKey] = (dailyPoo[dateKey] || 0) + 1; totalPoo++; }
+  }
+
+  document.getElementById('dt-total').textContent = totalPee + totalPoo;
+  document.getElementById('dt-pee').textContent = totalPee;
+  document.getElementById('dt-poo').textContent = totalPoo;
+
+  const allDates = [...new Set([...Object.keys(dailyPee), ...Object.keys(dailyPoo)])].sort();
+  if (!allDates.length) {
+    if (diaperTrendChart) { diaperTrendChart.destroy(); diaperTrendChart = null; }
+    return;
+  }
+
+  const labels = [], dataPee = [], dataPoo = [], isoLabels = [];
+  let cur = new Date(allDates[0] + 'T00:00:00');
+  const end = new Date(allDates[allDates.length - 1] + 'T00:00:00');
+  while (cur <= end) {
+    const k = localDateStr(cur);
+    isoLabels.push(k);
+    labels.push(formatChartDateLabel(k));
+    dataPee.push(dailyPee[k] || 0);
+    dataPoo.push(dailyPoo[k] || 0);
+    cur.setDate(cur.getDate() + 1);
+  }
+
+  const ctx = document.getElementById('diaper-trends-canvas');
+  if (diaperTrendChart) diaperTrendChart.destroy();
+  diaperTrendChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: '💛 Pee',
+          data: dataPee,
+          backgroundColor: 'rgba(255,200,55,0.5)',
+          borderColor: 'rgba(255,200,55,0.7)',
+          borderWidth: 1,
+          borderRadius: {topLeft: 0, topRight: 0, bottomLeft: 6, bottomRight: 6},
+          stack: 'diaper',
+        },
+        {
+          label: '💩 Poo',
+          data: dataPoo,
+          backgroundColor: 'rgba(200,121,65,0.5)',
+          borderColor: 'rgba(200,121,65,0.7)',
+          borderWidth: 1,
+          borderRadius: {topLeft: 6, topRight: 6, bottomLeft: 0, bottomRight: 0},
+          stack: 'diaper',
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {display: true, labels: {color: '#6e6e87', font: {family: 'Outfit', size: 10}, boxWidth: 12, padding: 12}},
+        tooltip: {
+          backgroundColor: 'rgba(20,20,34,0.95)',
+          titleColor: '#ebebf5',
+          bodyColor: '#6e6e87',
+          borderColor: 'rgba(255,255,255,0.06)',
+          borderWidth: 1,
+          cornerRadius: 10,
+          padding: 12,
+          titleFont: {family: 'Outfit', weight: '600'},
+          bodyFont: {family: 'Outfit'},
+        }
+      },
+      scales: {
+        x: {
+          stacked: true,
+          ticks: {color: '#4a4a62', font: {size: 10, family: 'Outfit', weight: '500'}, maxRotation: 45},
+          grid: {color: 'rgba(255,255,255,0.03)'},
+        },
+        y: {
+          stacked: true,
+          beginAtZero: true,
+          ticks: {color: '#4a4a62', font: {family: 'Outfit', weight: '500'}, stepSize: 1, precision: 0},
+          grid: {color: 'rgba(255,255,255,0.03)'},
+        },
+      },
+    },
+  });
+}
+
 // ── Trends ──────────────────────────────────────
 function setTrendRange(range, btn) {
   trendRange = range;
@@ -1155,6 +1464,7 @@ async function pollState() {
     }
     state = await r.json();
     if (state.weight_log) weightData = state.weight_log;
+    if (state.diaper_log) { diaperLog = state.diaper_log; updateDiaperCounts(); }
     updateMain();
     updateSamples();
     updateSettings();
