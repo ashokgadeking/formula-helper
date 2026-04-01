@@ -61,17 +61,22 @@ button:active{transform:scale(.96);filter:brightness(.85)}
   transition:color .2s,background .2s}
 .gear:active{color:var(--dim);background:rgba(255,255,255,.05)}
 
-.btn-grid{display:grid;grid-template-columns:1fr 1fr 1fr;flex-shrink:0;
+.btn-grid{display:grid;grid-template-columns:repeat(6,1fr);flex-shrink:0;
   border-top:1px solid var(--border-light);gap:1px;background:var(--border)}
 .btn-grid button{height:84px;font-size:.9rem;font-weight:600;
-  color:var(--white);background:var(--bg2);letter-spacing:.3px}
+  color:var(--white);background:var(--bg2);letter-spacing:.3px;grid-column:span 2}
 .start-btn{background:rgba(68,210,110,.06)!important;color:var(--green)!important}
 .start-btn .num{font-size:2.2rem;display:block;line-height:1;font-weight:700;letter-spacing:-1px}
 .start-btn .ml-unit{font-size:.6rem;opacity:.4;display:block;font-weight:500;letter-spacing:.5px;margin-top:3px}
 .log-btn{background:var(--yellow-bg)!important;color:var(--yellow)!important}
 .samples-btn{background:var(--blue-bg)!important;color:var(--blue)!important}
-.diaper-btn{background:rgba(255,140,30,.08)!important;color:#ff8c1a!important}
 .custom-btn{background:var(--purple-bg)!important;color:var(--purple)!important}
+.pee-btn{grid-column:span 3!important;background:rgba(255,200,55,.06)!important;color:var(--yellow)!important}
+.poo-btn{grid-column:span 3!important;background:rgba(200,121,65,.08)!important;color:#c87941!important}
+.pee-btn .d-sub,.poo-btn .d-sub{font-size:.6rem;opacity:.5;display:block;font-weight:500;letter-spacing:.5px;margin-top:3px}
+
+/* ── Log tabs ────────────────────────────────────── */
+.log-tabs{display:flex;justify-content:center;gap:6px;padding:4px 16px 10px;flex-shrink:0}
 
 /* ── Samples screen ─────────────────────────────── */
 .samples-grid{flex:1;display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--border)}
@@ -204,17 +209,7 @@ input{-webkit-user-select:text;user-select:text}
 .log-list::-webkit-scrollbar-track{background:transparent}
 .log-list::-webkit-scrollbar-thumb{background:var(--dim2);border-radius:3px}
 
-/* ── Diaper picker ──────────────────────────────── */
-.diaper-picker{flex:1;display:flex;flex-direction:column;gap:1px;background:var(--border)}
-.diaper-action-btn{flex:1;display:flex;flex-direction:column;align-items:center;
-  justify-content:center;border:none;cursor:pointer;font-family:var(--font);
-  -webkit-tap-highlight-color:transparent;transition:filter .1s ease}
-.diaper-action-btn:active{filter:brightness(.8)}
-.diaper-action-btn .d-emoji{font-size:5rem;line-height:1;margin-bottom:18px}
-.diaper-action-btn .d-label{font-size:1.8rem;font-weight:700;letter-spacing:.5px}
-.diaper-action-btn .d-count{font-size:.8rem;font-weight:500;letter-spacing:1px;margin-top:8px;opacity:.7}
-.diaper-pee{background:rgba(255,200,55,.06);color:var(--yellow)}
-.diaper-poo{background:rgba(200,121,65,.08);color:#c87941}
+/* ── Diaper toast ───────────────────────────────── */
 .diaper-toast{position:absolute;top:16px;left:50%;transform:translateX(-50%);
   padding:10px 22px;border-radius:20px;font-size:.85rem;font-weight:600;
   letter-spacing:.3px;pointer-events:none;opacity:0;transition:opacity .2s;z-index:50;
@@ -294,12 +289,15 @@ input{-webkit-user-select:text;user-select:text}
       <div class="progress-fill" id="progress-fill"></div>
     </div>
   </div>
+  <div class="diaper-toast" id="main-diaper-toast"></div>
   <div class="btn-grid">
     <button class="start-btn" onclick="startTimer(90)"><span class="num">90</span><span class="ml-unit">ml</span></button>
     <button class="start-btn" onclick="startTimer(100)"><span class="num">100</span><span class="ml-unit">ml</span></button>
     <button class="start-btn" onclick="startTimer(120)"><span class="num">120</span><span class="ml-unit">ml</span></button>
+    <button class="pee-btn" onclick="logDiaper('pee')">💛 Pee<span class="d-sub" id="pee-today-count"></span></button>
+    <button class="poo-btn" onclick="logDiaper('poo')">💩 Poo<span class="d-sub" id="poo-today-count"></span></button>
     <button class="log-btn" onclick="showScreen('log')">Log</button>
-    <button class="diaper-btn" onclick="showScreen('diaper')">Diaper</button>
+    <button class="samples-btn" onclick="showScreen('samples')">Sample Sizes</button>
     <button class="custom-btn" onclick="showScreen('calculator')">Custom Amount</button>
   </div>
 </div>
@@ -308,44 +306,6 @@ input{-webkit-user-select:text;user-select:text}
 <div id="samples-screen" class="screen">
   <div class="samples-grid" id="samples-grid"></div>
   <div class="bottom-bar single"><button onclick="showScreen('main')">Back</button></div>
-</div>
-
-<!-- ══ DIAPER PICKER ══════════════════════════════ -->
-<div id="diaper-screen" class="screen" style="position:relative">
-  <div class="diaper-picker">
-    <button class="diaper-action-btn diaper-pee" onclick="logDiaper('pee')">
-      <span class="d-emoji">💛</span>
-      <span class="d-label">PEE</span>
-      <span class="d-count" id="diaper-pee-today"></span>
-    </button>
-    <button class="diaper-action-btn diaper-poo" onclick="logDiaper('poo')">
-      <span class="d-emoji">💩</span>
-      <span class="d-label">POO</span>
-      <span class="d-count" id="diaper-poo-today"></span>
-    </button>
-  </div>
-  <div class="diaper-toast" id="diaper-toast"></div>
-  <div class="bottom-bar split">
-    <button onclick="showScreen('main')">Back</button>
-    <button onclick="showScreen('diaper-log')" style="background:var(--yellow-bg);color:var(--yellow)">Log</button>
-  </div>
-</div>
-
-<!-- ══ DIAPER LOG ═════════════════════════════════ -->
-<div id="diaper-log-screen" class="screen">
-  <div class="log-header">
-    <button id="diaper-log-prev" class="log-nav-btn" onclick="diaperLogNav(-1)">&lt;</button>
-    <div style="text-align:center">
-      <div class="log-title" id="diaper-log-date-label" style="padding:0">Today</div>
-      <div id="diaper-log-count" style="font-size:.65rem;color:var(--dim);font-weight:500;letter-spacing:.5px"></div>
-    </div>
-    <button id="diaper-log-next" class="log-nav-btn" onclick="diaperLogNav(1)">&gt;</button>
-  </div>
-  <div class="log-list" id="diaper-log-list"></div>
-  <div class="bottom-bar split">
-    <button onclick="showScreen('diaper')">Back</button>
-    <button onclick="showScreen('diaper-trends')" style="background:var(--blue-bg);color:var(--blue)">Trends</button>
-  </div>
 </div>
 
 <!-- ══ DIAPER TRENDS ══════════════════════════════ -->
@@ -379,11 +339,15 @@ input{-webkit-user-select:text;user-select:text}
     <button id="log-next" class="log-nav-btn" onclick="logNav(1)">&gt;</button>
     <div id="backup-status" class="backup-indicator"></div>
   </div>
+  <div class="log-tabs">
+    <button class="trends-tab active" onclick="setLogTab('formula',this)">Formula</button>
+    <button class="trends-tab" onclick="setLogTab('diaper',this)">Diapers</button>
+  </div>
   <div class="log-list" id="log-list"></div>
-  <button class="log-fab" onclick="openAddEntry()" title="Add entry manually">+</button>
+  <button class="log-fab" id="log-fab" onclick="openAddEntry()" title="Add entry manually">+</button>
   <div class="bottom-bar split">
     <button onclick="showScreen('main')">Back</button>
-    <button onclick="showScreen('trends')" style="background:var(--blue-bg);color:var(--blue)">Trends</button>
+    <button id="log-trends-btn" onclick="goLogTrends()" style="background:var(--blue-bg);color:var(--blue)">Trends</button>
   </div>
 </div>
 
@@ -511,10 +475,8 @@ function showScreen(name) {
   document.getElementById(name + '-screen').classList.add('active');
   location.hash = name === 'main' ? '' : name;
   if (name === 'main') pollState();
-  if (name === 'log') { const dates=getLogDates(); logViewDate=dates.length?dates[dates.length-1]:localDateStr(new Date()); updateLog(); }
+  if (name === 'log') { _initLogViewDate(); updateLog(); }
   if (name === 'trends') { pollState().then(() => updateTrends()); }
-  if (name === 'diaper') updateDiaperCounts();
-  if (name === 'diaper-log') { const dates=getDiaperLogDates(); diaperLogViewDate=dates.length?dates[dates.length-1]:localDateStr(new Date()); updateDiaperLog(); }
   if (name === 'diaper-trends') updateDiaperTrends();
 }
 
@@ -620,7 +582,37 @@ function updateSamples() {
 let modalMode = '';  // 'edit' or 'leftover'
 let modalSk = '';
 let modalEntry = null;
-let logViewDate = ''; // set properly in showScreen('log')
+let logViewDate = '';
+let logActiveTab = 'formula'; // 'formula' or 'diaper'
+
+function _initLogViewDate() {
+  if (logActiveTab === 'formula') {
+    const dates = getLogDates();
+    logViewDate = dates.length ? dates[dates.length - 1] : localDateStr(new Date());
+  } else {
+    const dates = _getDiaperLogDates();
+    logViewDate = dates.length ? dates[dates.length - 1] : localDateStr(new Date());
+  }
+}
+
+function _getDiaperLogDates() {
+  const s = new Set();
+  diaperLog.forEach(e => { const d = (e.date || '').split(' ')[0]; if (d) s.add(d); });
+  return [...s].sort();
+}
+
+function setLogTab(tab, btn) {
+  logActiveTab = tab;
+  document.querySelectorAll('.log-tabs .trends-tab').forEach(t => t.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('log-fab').style.display = tab === 'formula' ? '' : 'none';
+  _initLogViewDate();
+  updateLog();
+}
+
+function goLogTrends() {
+  showScreen(logActiveTab === 'formula' ? 'trends' : 'diaper-trends');
+}
 
 function entryText(e) { return typeof e === 'string' ? e : (e.text || ''); }
 function entryLeftover(e) { return typeof e === 'object' ? (e.leftover || '') : ''; }
@@ -651,6 +643,14 @@ function formatDateLabel(d) {
 }
 
 function logNav(dir) {
+  if (logActiveTab === 'diaper') {
+    const dates = _getDiaperLogDates();
+    const idx = dates.indexOf(logViewDate);
+    if (dir < 0 && idx > 0) logViewDate = dates[idx - 1];
+    else if (dir > 0 && idx < dates.length - 1) logViewDate = dates[idx + 1];
+    updateLog();
+    return;
+  }
   const dates = getLogDates();
   const undated = state.mix_log && state.mix_log.some(e => !entryDate(e));
   const idx = dates.indexOf(logViewDate);
@@ -665,6 +665,8 @@ function logNav(dir) {
 }
 
 function updateLog() {
+  if (logActiveTab === 'diaper') { _updateDiaperTab(); return; }
+
   const list = document.getElementById('log-list');
   list.innerHTML = '';
 
@@ -1028,15 +1030,8 @@ function parseWeightCsv(text) {
 
 // ── Diaper ──────────────────────────────────────
 let diaperLog = [];
-let diaperLogViewDate = '';
 let diaperTrendRange = 'week';
 let diaperTrendChart = null;
-
-function getDiaperLogDates() {
-  const s = new Set();
-  diaperLog.forEach(e => { const d = (e.date || '').split(' ')[0]; if (d) s.add(d); });
-  return [...s].sort();
-}
 
 function updateDiaperCounts() {
   const today = localDateStr(new Date());
@@ -1047,8 +1042,10 @@ function updateDiaperCounts() {
       else if (e.type === 'poo') poo++;
     }
   });
-  document.getElementById('diaper-pee-today').textContent = pee ? pee + ' today' : '';
-  document.getElementById('diaper-poo-today').textContent = poo ? poo + ' today' : '';
+  const peeEl = document.getElementById('pee-today-count');
+  const pooEl = document.getElementById('poo-today-count');
+  if (peeEl) peeEl.textContent = pee ? pee + ' today' : '';
+  if (pooEl) pooEl.textContent = poo ? poo + ' today' : '';
 }
 
 async function logDiaper(type) {
@@ -1070,8 +1067,7 @@ async function logDiaper(type) {
   diaperLog.sort((a, b) => a.sk < b.sk ? -1 : 1);
   updateDiaperCounts();
 
-  // Toast feedback
-  const toast = document.getElementById('diaper-toast');
+  const toast = document.getElementById('main-diaper-toast');
   toast.textContent = type === 'pee' ? '💛 Pee logged!' : '💩 Poo logged!';
   toast.style.background = type === 'pee' ? 'rgba(255,200,55,.15)' : 'rgba(200,121,65,.15)';
   toast.style.color = type === 'pee' ? 'var(--yellow)' : '#c87941';
@@ -1080,30 +1076,34 @@ async function logDiaper(type) {
   setTimeout(() => toast.classList.remove('show'), 1800);
 }
 
-function diaperLogNav(dir) {
-  const dates = getDiaperLogDates();
-  const idx = dates.indexOf(diaperLogViewDate);
-  if (dir < 0 && idx > 0) diaperLogViewDate = dates[idx - 1];
-  else if (dir > 0 && idx < dates.length - 1) diaperLogViewDate = dates[idx + 1];
-  updateDiaperLog();
+async function deleteDiaperEntry(sk) {
+  if (!confirm('Delete this entry?')) return;
+  await fetch(API_BASE + '/api/diaper/' + encodeURIComponent(sk), {method: 'DELETE'});
+  diaperLog = diaperLog.filter(e => e.sk !== sk);
+  updateLog();
+  updateDiaperCounts();
 }
 
-function updateDiaperLog() {
-  const list = document.getElementById('diaper-log-list');
+function _updateDiaperTab() {
+  const list = document.getElementById('log-list');
   list.innerHTML = '';
-  document.getElementById('diaper-log-date-label').textContent = formatDateLabel(diaperLogViewDate);
+  document.getElementById('log-date-label').textContent = formatDateLabel(logViewDate);
 
-  const dates = getDiaperLogDates();
-  const idx = dates.indexOf(diaperLogViewDate);
-  document.getElementById('diaper-log-prev').style.visibility = idx > 0 ? 'visible' : 'hidden';
-  document.getElementById('diaper-log-next').style.visibility = idx >= 0 && idx < dates.length - 1 ? 'visible' : 'hidden';
+  const dates = _getDiaperLogDates();
+  const idx = dates.indexOf(logViewDate);
+  document.getElementById('log-prev').style.visibility = idx > 0 ? 'visible' : 'hidden';
+  document.getElementById('log-next').style.visibility = idx >= 0 && idx < dates.length - 1 ? 'visible' : 'hidden';
 
-  const filtered = diaperLog.filter(e => (e.date || '').startsWith(diaperLogViewDate));
-  document.getElementById('diaper-log-count').textContent =
+  const filtered = diaperLog.filter(e => (e.date || '').startsWith(logViewDate));
+  document.getElementById('log-count').textContent =
     filtered.length ? filtered.length + ' diaper' + (filtered.length !== 1 ? 's' : '') : '';
 
+  if (!diaperLog.length) {
+    list.innerHTML = '<div class="log-empty">No diapers recorded yet</div>';
+    return;
+  }
   if (!filtered.length) {
-    list.innerHTML = '<div class="log-empty">No diapers recorded for this day</div>';
+    list.innerHTML = '<div class="log-empty">No entries for this day</div>';
     return;
   }
 
@@ -1136,14 +1136,6 @@ function updateDiaperLog() {
     card.appendChild(actions);
     list.appendChild(card);
   }
-}
-
-async function deleteDiaperEntry(sk) {
-  if (!confirm('Delete this entry?')) return;
-  await fetch(API_BASE + '/api/diaper/' + encodeURIComponent(sk), {method: 'DELETE'});
-  diaperLog = diaperLog.filter(e => e.sk !== sk);
-  updateDiaperLog();
-  updateDiaperCounts();
 }
 
 function setDiaperTrendRange(range, btn) {
@@ -1464,7 +1456,8 @@ async function pollState() {
     }
     state = await r.json();
     if (state.weight_log) weightData = state.weight_log;
-    if (state.diaper_log) { diaperLog = state.diaper_log; updateDiaperCounts(); }
+    if (state.diaper_log) { diaperLog = state.diaper_log; }
+    updateDiaperCounts();
     updateMain();
     updateSamples();
     updateSettings();
