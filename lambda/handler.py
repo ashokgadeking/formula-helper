@@ -860,7 +860,7 @@ def post_diaper(event):
         user_name = ""
 
     now = _now_ct()
-    date_str = now.strftime("%Y-%m-%d %I:%M %p")
+    date_str = data.get("date", "").strip() or now.strftime("%Y-%m-%d %I:%M %p")
     sk = now.strftime("%Y-%m-%d") + "#" + f"{time.time():.3f}"
 
     table.put_item(Item={

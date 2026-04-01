@@ -357,7 +357,7 @@ input{-webkit-user-select:text;user-select:text}
     <button class="trends-tab" onclick="setLogTab('diaper',this)">Diapers</button>
   </div>
   <div class="log-list" id="log-list"></div>
-  <button class="log-fab" id="log-fab" onclick="openAddEntry()" title="Add entry manually">+</button>
+  <button class="log-fab" id="log-fab" onclick="logActiveTab==='diaper'?openAddDiaper():openAddEntry()" title="Add entry manually">+</button>
   <div class="bottom-bar split">
     <button onclick="showScreen('main')">Back</button>
     <button id="log-trends-btn" onclick="goLogTrends()" style="background:var(--blue-bg);color:var(--blue)">Trends</button>
@@ -408,6 +408,24 @@ input{-webkit-user-select:text;user-select:text}
       <div id="modal-date-row" style="display:none;gap:10px;align-items:center">
         <div style="font-size:.7rem;color:var(--dim);width:35px;letter-spacing:.5px">DATE</div>
         <input id="modal-date" type="date" autocomplete="off" style="flex:1">
+      </div>
+    </div>
+    <div id="modal-diaper-fields" style="display:none;gap:12px;flex-direction:column">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <button id="modal-diaper-pee" onclick="selectDiaperType('pee')"
+          style="padding:14px;border-radius:var(--radius-sm);font-size:.95rem;font-weight:600;
+          background:var(--card2);color:var(--dim);border:1px solid var(--border)">💧 Pee</button>
+        <button id="modal-diaper-poo" onclick="selectDiaperType('poo')"
+          style="padding:14px;border-radius:var(--radius-sm);font-size:.95rem;font-weight:600;
+          background:var(--card2);color:var(--dim);border:1px solid var(--border)">💩 Poo</button>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center">
+        <div style="font-size:.7rem;color:var(--dim);width:35px;letter-spacing:.5px">TIME</div>
+        <input id="modal-diaper-time" type="time" autocomplete="off" style="flex:1">
+      </div>
+      <div style="display:flex;gap:10px;align-items:center">
+        <div style="font-size:.7rem;color:var(--dim);width:35px;letter-spacing:.5px">DATE</div>
+        <input id="modal-diaper-date" type="date" autocomplete="off" style="flex:1">
       </div>
     </div>
     <div class="modal-btns">
@@ -621,7 +639,6 @@ function setLogTab(tab, btn) {
   logActiveTab = tab;
   document.querySelectorAll('.log-tabs .trends-tab').forEach(t => t.classList.remove('active'));
   btn.classList.add('active');
-  document.getElementById('log-fab').style.display = tab === 'formula' ? '' : 'none';
   _initLogViewDate();
   updateLog();
 }
@@ -813,6 +830,33 @@ function openAddEntry() {
   document.getElementById('modal-ml').focus();
 }
 
+let modalDiaperType = 'pee';
+function selectDiaperType(type) {
+  modalDiaperType = type;
+  const peeBtn = document.getElementById('modal-diaper-pee');
+  const pooBtn = document.getElementById('modal-diaper-poo');
+  peeBtn.style.background = type === 'pee' ? 'var(--yellow-bg)' : 'var(--card2)';
+  peeBtn.style.color = type === 'pee' ? 'var(--yellow)' : 'var(--dim)';
+  peeBtn.style.borderColor = type === 'pee' ? 'var(--yellow-border)' : 'var(--border)';
+  pooBtn.style.background = type === 'poo' ? 'rgba(200,121,65,.12)' : 'var(--card2)';
+  pooBtn.style.color = type === 'poo' ? '#c87941' : 'var(--dim)';
+  pooBtn.style.borderColor = type === 'poo' ? 'rgba(200,121,65,.3)' : 'var(--border)';
+}
+function openAddDiaper() {
+  modalMode = 'add-diaper';
+  modalDiaperType = 'pee';
+  const now = new Date();
+  document.getElementById('modal-title').textContent = 'Add Diaper';
+  document.getElementById('modal-single-field').style.display = 'none';
+  document.getElementById('modal-edit-fields').style.display = 'none';
+  document.getElementById('modal-diaper-fields').style.display = 'flex';
+  document.getElementById('modal-diaper-time').value =
+    String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+  document.getElementById('modal-diaper-date').value = logViewDate || localDateStr(now);
+  document.getElementById('modal-overlay').classList.add('active');
+  selectDiaperType('pee');
+}
+
 function openLeftover(sk) {
   modalMode = 'leftover';
   modalSk = sk;
@@ -828,6 +872,7 @@ function openLeftover(sk) {
 
 function closeModal() {
   document.getElementById('modal-overlay').classList.remove('active');
+  document.getElementById('modal-diaper-fields').style.display = 'none';
 }
 
 function _time24to12str(time24) {
@@ -840,7 +885,25 @@ function _time24to12str(time24) {
 
 async function saveModal() {
   let url, method, body;
-  if (modalMode === 'add') {
+  if (modalMode === 'add-diaper') {
+    const timeStr = _time24to12str(document.getElementById('modal-diaper-time').value);
+    const dateVal = document.getElementById('modal-diaper-date').value;
+    const dateStr = dateVal && timeStr ? dateVal + ' ' + timeStr : '';
+    const r = await fetch(API_BASE + '/api/diaper', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({type: modalDiaperType, date: dateStr}),
+    });
+    if (r.ok) {
+      const data = await r.json();
+      diaperLog.push({sk: data.sk, type: modalDiaperType, date: dateStr, created_by: ''});
+      diaperLog.sort((a, b) => a.sk < b.sk ? -1 : 1);
+      updateDiaperCounts();
+    }
+    closeModal();
+    updateLog();
+    return;
+  } else if (modalMode === 'add') {
     const ml = parseInt(document.getElementById('modal-ml').value) || 0;
     if (!ml) return;
     const timeStr = _time24to12str(document.getElementById('modal-time').value);
