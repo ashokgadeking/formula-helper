@@ -91,31 +91,36 @@ button:active{transform:scale(.96);filter:brightness(.85)}
 .water-val{color:var(--blue)}.powder-val{color:var(--green)}
 
 /* ── Log screen ──────────────────────────────────── */
-.log-header{display:flex;align-items:center;justify-content:center;
-  padding:16px 16px 8px;gap:14px;flex-shrink:0;position:relative}
-.log-nav-btn{width:36px;height:36px;border-radius:var(--radius-sm);
-  background:var(--card);color:var(--dim);font-size:1rem;font-weight:600;
-  display:flex;align-items:center;justify-content:center;
-  border:1px solid var(--border)}
-.log-title{font-size:1.2rem;font-weight:700;text-align:center;padding:16px 0 8px;
-  letter-spacing:-.3px}
-.log-list{flex:1;overflow-y:auto;padding:6px 14px 14px;display:flex;flex-direction:column;gap:6px;
+.log-banner{flex-shrink:0;position:relative;text-align:center;padding:22px 60px 18px;
+  background:radial-gradient(ellipse at 50% 0%,rgba(90,170,255,.06) 0%,transparent 70%);
+  border-bottom:1px solid var(--border)}
+.log-banner-sub{font-size:.6rem;color:var(--dim);letter-spacing:2.5px;font-weight:500;
+  text-transform:uppercase;margin-bottom:8px;min-height:.75rem}
+.log-banner-date{font-size:1.7rem;font-weight:700;letter-spacing:-.5px;line-height:1;color:var(--white)}
+.log-banner-nav{position:absolute;top:50%;transform:translateY(-50%);
+  width:36px;height:36px;border-radius:var(--radius-sm);background:var(--card2);
+  color:var(--dim);font-size:.9rem;font-weight:700;display:flex;align-items:center;
+  justify-content:center;border:1px solid var(--border)}
+.log-banner-nav.prev{left:14px}
+.log-banner-nav.next{right:14px}
+.log-list{flex:1;overflow-y:auto;padding:8px 14px 14px;display:flex;flex-direction:column;gap:6px;
   -webkit-overflow-scrolling:touch;touch-action:pan-y;overscroll-behavior:contain}
-.log-empty{color:var(--dim);flex:1;display:flex;align-items:center;justify-content:center;
-  font-size:.9rem;font-weight:400}
-.log-card{background:var(--card);border-radius:var(--radius);padding:14px 16px;display:flex;
-  align-items:center;gap:14px;position:relative;border:1px solid var(--border);
-  transition:background .15s}
+.log-empty{color:var(--dim2);flex:1;display:flex;align-items:center;justify-content:center;
+  font-size:.85rem;font-weight:400;letter-spacing:.3px}
+.log-card{background:var(--card);border-radius:var(--radius);padding:13px 14px 13px 0;display:flex;
+  align-items:center;gap:12px;position:relative;border:1px solid var(--border);
+  overflow:hidden;transition:background .15s}
 .log-card:active{background:var(--card2)}
-.log-num{font-size:.65rem;color:var(--dim2);width:40px;flex-shrink:0;text-align:center;
+.log-card-bar{width:3px;align-self:stretch;flex-shrink:0;border-radius:0 3px 3px 0;margin-right:2px}
+.log-num{font-size:.6rem;color:var(--dim2);width:32px;flex-shrink:0;text-align:center;
   font-weight:600;letter-spacing:.5px}
 .log-info{flex:1;min-width:0}
-.log-text{font-size:.9rem;color:var(--white);font-weight:500}
-.log-leftover{font-size:.75rem;color:var(--yellow);margin-top:4px;font-weight:400}
+.log-text{font-size:.95rem;color:var(--white);font-weight:500}
+.log-leftover{font-size:.72rem;color:var(--yellow);margin-top:3px;font-weight:400}
 .log-leftover.empty{color:var(--dim2);font-style:normal;font-weight:400}
-.log-actions{display:flex;gap:5px;flex-shrink:0}
-.log-act{width:34px;height:34px;border-radius:var(--radius-sm);display:flex;align-items:center;
-  justify-content:center;font-size:.8rem;color:var(--white);cursor:pointer;border:none}
+.log-actions{display:flex;gap:5px;flex-shrink:0;padding-right:10px}
+.log-act{width:32px;height:32px;border-radius:var(--radius-sm);display:flex;align-items:center;
+  justify-content:center;font-size:.75rem;color:var(--white);cursor:pointer;border:none}
 .log-act.leftover-btn{background:var(--yellow-bg);color:var(--yellow);border:1px solid var(--yellow-border)}
 .log-act.edit-btn{background:var(--blue-bg);color:var(--blue);border:1px solid var(--blue-border)}
 .log-act.del-btn{background:var(--red-bg);color:var(--red);border:1px solid var(--red-border)}
@@ -151,22 +156,27 @@ input{-webkit-user-select:text;user-select:text}
 .log-fab:active{opacity:.8}
 
 /* ── Trends screen ──────────────────────────────── */
-.trends-title{font-size:1.2rem;font-weight:700;text-align:center;padding:18px 0 6px;
-  letter-spacing:-.3px}
-.trends-tabs{display:flex;justify-content:center;gap:6px;padding:8px 16px;flex-shrink:0}
-.trends-tab{padding:8px 20px;border-radius:20px;font-size:.75rem;font-weight:600;
-  background:var(--card);color:var(--dim);border:1px solid var(--border);
-  letter-spacing:.5px}
+.trends-header{flex-shrink:0;padding:22px 20px 14px;
+  background:radial-gradient(ellipse at 50% 0%,rgba(90,170,255,.06) 0%,transparent 70%);
+  border-bottom:1px solid var(--border)}
+.trends-header-sub{font-size:.6rem;color:var(--dim);letter-spacing:2.5px;font-weight:500;
+  text-transform:uppercase;margin-bottom:8px}
+.trends-header-title{font-size:1.7rem;font-weight:700;letter-spacing:-.5px;line-height:1}
+.trends-tabs{display:flex;justify-content:flex-start;gap:6px;padding:12px 14px 6px;flex-shrink:0}
+.trends-tab{padding:7px 16px;border-radius:20px;font-size:.72rem;font-weight:600;
+  background:var(--card2);color:var(--dim);border:1px solid var(--border);
+  letter-spacing:.4px}
 .trends-tab.active{background:var(--blue-bg);color:var(--blue);border-color:var(--blue-border)}
 #weight-toggle-btn.active{background:var(--green-bg);color:var(--green);border-color:var(--green-border)}
-.trends-chart{flex:1;padding:8px 14px;position:relative;min-height:0;overflow:hidden}
+#weight-toggle-btn{margin-left:auto}
+.trends-chart{flex:1;padding:4px 14px 8px;position:relative;min-height:0;overflow:hidden}
 .trends-chart canvas{position:absolute;top:0;left:14px;right:14px;bottom:8px;
   width:calc(100% - 28px)!important;height:calc(100% - 8px)!important}
 .trends-summary{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;padding:10px 14px;flex-shrink:0}
-.trends-stat{background:var(--card);border-radius:var(--radius);padding:14px 10px;
-  text-align:center;border:1px solid var(--border)}
-.trends-stat-val{font-size:1.5rem;font-weight:700;color:var(--blue);letter-spacing:-.5px}
-.trends-stat-lbl{font-size:.55rem;color:var(--dim);letter-spacing:1.5px;margin-top:4px;font-weight:500}
+.trends-stat{background:var(--card2);border-radius:var(--radius);padding:14px 8px;
+  text-align:center;border:1px solid var(--border);border-top-width:2px;overflow:hidden}
+.trends-stat-val{font-size:1.8rem;font-weight:700;letter-spacing:-.5px;line-height:1}
+.trends-stat-lbl{font-size:.52rem;color:var(--dim);letter-spacing:1.5px;margin-top:5px;font-weight:500;text-transform:uppercase}
 
 /* ── Calculator screen ───────────────────────────── */
 .calc-body{flex:1;display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border)}
@@ -310,7 +320,10 @@ input{-webkit-user-select:text;user-select:text}
 
 <!-- ══ DIAPER TRENDS ══════════════════════════════ -->
 <div id="diaper-trends-screen" class="screen">
-  <div class="trends-title">DIAPER TRENDS</div>
+  <div class="trends-header">
+    <div class="trends-header-sub">DIAPERS</div>
+    <div class="trends-header-title">Diaper Log</div>
+  </div>
   <div class="trends-tabs">
     <button class="trends-tab active" onclick="setDiaperTrendRange('week',this)">Week</button>
     <button class="trends-tab" onclick="setDiaperTrendRange('month',this)">Month</button>
@@ -318,9 +331,9 @@ input{-webkit-user-select:text;user-select:text}
     <button class="trends-tab" onclick="setDiaperTrendRange('all',this)">All</button>
   </div>
   <div class="trends-summary" id="diaper-trends-summary">
-    <div class="trends-stat"><div class="trends-stat-val" id="dt-total">0</div><div class="trends-stat-lbl">TOTAL</div></div>
-    <div class="trends-stat"><div class="trends-stat-val" id="dt-pee" style="color:var(--yellow)">0</div><div class="trends-stat-lbl">💛 PEE</div></div>
-    <div class="trends-stat"><div class="trends-stat-val" id="dt-poo" style="color:#c87941">0</div><div class="trends-stat-lbl">💩 POO</div></div>
+    <div class="trends-stat" style="border-top-color:var(--blue)"><div class="trends-stat-val" id="dt-total" style="color:var(--blue)">0</div><div class="trends-stat-lbl">Total</div></div>
+    <div class="trends-stat" style="border-top-color:var(--yellow)"><div class="trends-stat-val" id="dt-pee" style="color:var(--yellow)">0</div><div class="trends-stat-lbl">💛 Pee</div></div>
+    <div class="trends-stat" style="border-top-color:#c87941"><div class="trends-stat-val" id="dt-poo" style="color:#c87941">0</div><div class="trends-stat-lbl">💩 Poo</div></div>
   </div>
   <div class="trends-chart"><canvas id="diaper-trends-canvas"></canvas></div>
   <div class="bottom-bar single">
@@ -330,14 +343,12 @@ input{-webkit-user-select:text;user-select:text}
 
 <!-- ══ LOG ════════════════════════════════════════ -->
 <div id="log-screen" class="screen">
-  <div class="log-header">
-    <button id="log-prev" class="log-nav-btn" onclick="logNav(-1)">&lt;</button>
-    <div style="text-align:center">
-      <div class="log-title" id="log-date-label" style="padding:0">Today</div>
-      <div id="log-count" style="font-size:.65rem;color:var(--dim);font-weight:500;letter-spacing:.5px"></div>
-    </div>
-    <button id="log-next" class="log-nav-btn" onclick="logNav(1)">&gt;</button>
-    <div id="backup-status" class="backup-indicator"></div>
+  <div class="log-banner">
+    <div class="log-banner-sub" id="log-count"></div>
+    <div class="log-banner-date" id="log-date-label">Today</div>
+    <button id="log-prev" class="log-banner-nav prev" onclick="logNav(-1)">&#8249;</button>
+    <button id="log-next" class="log-banner-nav next" onclick="logNav(1)">&#8250;</button>
+    <div id="backup-status" class="backup-indicator" style="right:56px;top:12px;transform:none"></div>
   </div>
   <div class="log-tabs">
     <button class="trends-tab active" onclick="setLogTab('formula',this)">Formula</button>
@@ -353,18 +364,21 @@ input{-webkit-user-select:text;user-select:text}
 
 <!-- ══ TRENDS ════════════════════════════════════ -->
 <div id="trends-screen" class="screen">
-  <div class="trends-title">CONSUMPTION TRENDS</div>
+  <div class="trends-header">
+    <div class="trends-header-sub">FORMULA</div>
+    <div class="trends-header-title">Consumption</div>
+  </div>
   <div class="trends-tabs">
     <button class="trends-tab active" onclick="setTrendRange('week',this)">Week</button>
     <button class="trends-tab" onclick="setTrendRange('month',this)">Month</button>
     <button class="trends-tab" onclick="setTrendRange('year',this)">Year</button>
     <button class="trends-tab" onclick="setTrendRange('all',this)">All</button>
-    <button id="weight-toggle-btn" class="trends-tab" onclick="toggleWeightOverlay(this)" style="margin-left:auto">⚖ Weight</button>
+    <button id="weight-toggle-btn" class="trends-tab" onclick="toggleWeightOverlay(this)">⚖ Weight</button>
   </div>
   <div class="trends-summary" id="trends-summary">
-    <div class="trends-stat"><div class="trends-stat-val" id="ts-total">0</div><div class="trends-stat-lbl">TOTAL ML</div></div>
-    <div class="trends-stat"><div class="trends-stat-val" id="ts-count">0</div><div class="trends-stat-lbl">BOTTLES</div></div>
-    <div class="trends-stat"><div class="trends-stat-val" id="ts-avg">0</div><div class="trends-stat-lbl">AVG ML/DAY</div></div>
+    <div class="trends-stat" style="border-top-color:var(--blue)"><div class="trends-stat-val" id="ts-total" style="color:var(--blue)">0</div><div class="trends-stat-lbl">Total ml</div></div>
+    <div class="trends-stat" style="border-top-color:var(--green)"><div class="trends-stat-val" id="ts-count" style="color:var(--green)">0</div><div class="trends-stat-lbl">Bottles</div></div>
+    <div class="trends-stat" style="border-top-color:var(--yellow)"><div class="trends-stat-val" id="ts-avg" style="color:var(--yellow)">0</div><div class="trends-stat-lbl">Avg ml/day</div></div>
   </div>
   <div class="trends-chart"><canvas id="trends-canvas"></canvas></div>
   <div class="bottom-bar split">
@@ -712,6 +726,13 @@ function updateLog() {
     const lo = entryLeftover(e);
     const card = document.createElement('div');
     card.className = 'log-card';
+
+    const bar = document.createElement('div');
+    bar.className = 'log-card-bar';
+    const ml = entryMl(e);
+    bar.style.background = ml >= 120 ? 'var(--green)' : ml >= 90 ? 'var(--blue)' : 'var(--purple)';
+    bar.style.opacity = '.35';
+    card.appendChild(bar);
 
     const num = document.createElement('div');
     num.className = 'log-num';
@@ -1113,6 +1134,12 @@ function _updateDiaperTab() {
     const timeStr = (e.date || '').replace(/^\d{4}-\d{2}-\d{2}\s*/, '');
     const card = document.createElement('div');
     card.className = 'log-card';
+
+    const bar = document.createElement('div');
+    bar.className = 'log-card-bar';
+    bar.style.background = isPee ? 'var(--yellow)' : '#c87941';
+    bar.style.opacity = '.5';
+    card.appendChild(bar);
 
     const num = document.createElement('div');
     num.className = 'log-num';
