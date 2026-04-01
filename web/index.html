@@ -71,8 +71,8 @@ button:active{transform:scale(.96);filter:brightness(.85)}
 .log-btn{background:var(--yellow-bg)!important;color:var(--yellow)!important}
 .samples-btn{background:var(--blue-bg)!important;color:var(--blue)!important}
 .custom-btn{background:var(--purple-bg)!important;color:var(--purple)!important}
-.pee-btn{grid-column:span 3!important;background:rgba(255,200,55,.06)!important;color:var(--yellow)!important}
-.poo-btn{grid-column:span 3!important;background:rgba(200,121,65,.08)!important;color:#c87941!important}
+.pee-btn{grid-column:span 3!important;background:rgba(255,200,55,.06)!important;color:var(--yellow)!important;height:110px!important}
+.poo-btn{grid-column:span 3!important;background:rgba(200,121,65,.08)!important;color:#c87941!important;height:110px!important}
 .pee-btn .d-sub,.poo-btn .d-sub{font-size:.6rem;opacity:.5;display:block;font-weight:500;letter-spacing:.5px;margin-top:3px}
 
 /* ── Log tabs ────────────────────────────────────── */
@@ -306,7 +306,7 @@ input{-webkit-user-select:text;user-select:text}
     <button class="start-btn" onclick="startTimer(90)"><span class="num">90</span><span class="ml-unit">ml</span></button>
     <button class="start-btn" onclick="startTimer(100)"><span class="num">100</span><span class="ml-unit">ml</span></button>
     <button class="start-btn" onclick="startTimer(120)"><span class="num">120</span><span class="ml-unit">ml</span></button>
-    <button class="pee-btn" onclick="logDiaper('pee')">💛 Pee<span class="d-sub" id="pee-today-count"></span></button>
+    <button class="pee-btn" onclick="logDiaper('pee')">💧 Pee<span class="d-sub" id="pee-today-count"></span></button>
     <button class="poo-btn" onclick="logDiaper('poo')">💩 Poo<span class="d-sub" id="poo-today-count"></span></button>
     <button class="log-btn" onclick="showScreen('log')">Log</button>
     <button class="samples-btn" onclick="showScreen('samples')">Sample Sizes</button>
@@ -334,7 +334,7 @@ input{-webkit-user-select:text;user-select:text}
   </div>
   <div class="trends-summary" id="diaper-trends-summary">
     <div class="trends-stat" style="border-top-color:var(--blue)"><div class="trends-stat-val" id="dt-total" style="color:var(--blue)">0</div><div class="trends-stat-lbl">Total</div></div>
-    <div class="trends-stat" style="border-top-color:var(--yellow)"><div class="trends-stat-val" id="dt-pee" style="color:var(--yellow)">0</div><div class="trends-stat-lbl">💛 Pee</div></div>
+    <div class="trends-stat" style="border-top-color:var(--yellow)"><div class="trends-stat-val" id="dt-pee" style="color:var(--yellow)">0</div><div class="trends-stat-lbl">💧 Pee</div></div>
     <div class="trends-stat" style="border-top-color:#c87941"><div class="trends-stat-val" id="dt-poo" style="color:#c87941">0</div><div class="trends-stat-lbl">💩 Poo</div></div>
   </div>
   <div class="trends-chart"><canvas id="diaper-trends-canvas"></canvas></div>
@@ -1091,7 +1091,7 @@ async function logDiaper(type) {
   updateDiaperCounts();
 
   const toast = document.getElementById('main-diaper-toast');
-  toast.textContent = type === 'pee' ? '💛 Pee logged!' : '💩 Poo logged!';
+  toast.textContent = type === 'pee' ? '💧 Pee logged!' : '💩 Poo logged!';
   toast.style.background = type === 'pee' ? 'rgba(255,200,55,.15)' : 'rgba(200,121,65,.15)';
   toast.style.color = type === 'pee' ? 'var(--yellow)' : '#c87941';
   toast.style.border = '1px solid ' + (type === 'pee' ? 'rgba(255,200,55,.3)' : 'rgba(200,121,65,.3)');
@@ -1152,7 +1152,7 @@ function _updateDiaperTab() {
     const textDiv = document.createElement('div');
     textDiv.className = 'log-text';
     textDiv.style.color = isPee ? 'var(--yellow)' : '#c87941';
-    textDiv.textContent = (isPee ? '💛 Pee' : '💩 Poo') + (timeStr ? ' @ ' + timeStr : '');
+    textDiv.textContent = (isPee ? '💧 Pee' : '💩 Poo') + (timeStr ? ' @ ' + timeStr : '');
     info.appendChild(textDiv);
 
     const eskQ = e.sk.replace(/'/g, "\\'");
@@ -1224,7 +1224,7 @@ function updateDiaperTrends() {
       labels,
       datasets: [
         {
-          label: '💛 Pee',
+          label: '💧 Pee',
           data: dataPee,
           backgroundColor: 'rgba(255,200,55,0.5)',
           borderColor: 'rgba(255,200,55,0.7)',
