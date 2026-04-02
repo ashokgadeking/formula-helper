@@ -1259,8 +1259,11 @@ function _updateDiaperTab() {
 
 function setDiaperTrendRange(range, btn) {
   diaperTrendRange = range;
-  document.querySelectorAll('#diaper-trends-screen .trends-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('#diaper-trends-screen .trends-tab').forEach(t => {
+    if (t.id !== 'formula-toggle-btn') t.classList.remove('active');
+  });
   if (btn) btn.classList.add('active');
+  document.getElementById('formula-toggle-btn').classList.toggle('active', showFormulaOverlay);
   updateDiaperTrends();
 }
 
