@@ -1354,7 +1354,7 @@ function updateDiaperTrends() {
       (formulaByDate[dateKey] || []).forEach(f => {
         const pct = (parseTimeToMins(f.timeStr) / 1440) * 100;
         const fm = document.createElement('div');
-        fm.style.cssText = `position:absolute;left:3px;right:calc(50% + 1px);bottom:${pct}%;height:18px;transform:translateY(50%);border-radius:3px;background:rgba(90,170,255,.55);display:flex;align-items:center;justify-content:center;overflow:hidden;z-index:1`;
+        fm.style.cssText = `position:absolute;left:3px;right:calc(50% + 1px);bottom:${pct}%;height:18px;transform:translateY(50%);border-radius:3px;background:rgba(90,170,255,.55);display:flex;align-items:center;justify-content:center;overflow:hidden;z-index:1;opacity:.8`;
         const fl = document.createElement('span');
         fl.style.cssText = `font-size:.52rem;font-weight:600;color:rgba(255,255,255,.85);letter-spacing:.2px;white-space:nowrap;line-height:1;pointer-events:none`;
         fl.textContent = f.timeStr + ' · ' + f.ml + 'ml';
@@ -1372,7 +1372,7 @@ function updateDiaperTrends() {
       const pct = (parseTimeToMins(timeStr) / 1440) * 100;
       const m = document.createElement('div');
       const isPee = e.type === 'pee';
-      m.style.cssText = `position:absolute;left:${dLeft};right:${dRight};bottom:${pct}%;height:18px;transform:translateY(50%);border-radius:3px;background:${isPee?'rgba(255,200,55,.8)':'#c87941'};display:flex;align-items:center;justify-content:center;overflow:hidden;z-index:2`;
+      m.style.cssText = `position:absolute;left:${dLeft};right:${dRight};bottom:${pct}%;height:18px;transform:translateY(50%);border-radius:3px;background:${isPee?'rgba(255,200,55,1)':'#c87941'};display:flex;align-items:center;justify-content:center;overflow:hidden;z-index:2;opacity:.8`;
       const timeLabel = document.createElement('span');
       timeLabel.style.cssText = `font-size:.52rem;font-weight:600;color:${isPee?'rgba(0,0,0,.6)':'rgba(255,255,255,.75)'};letter-spacing:.2px;white-space:nowrap;line-height:1;pointer-events:none`;
       timeLabel.textContent = timeStr;
