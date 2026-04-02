@@ -1328,8 +1328,13 @@ function updateDiaperTrends() {
       const timeStr = (e.date || '').replace(/^\d{4}-\d{2}-\d{2}\s*/, '');
       const pct = (parseTimeToMins(timeStr) / 1440) * 100;
       const m = document.createElement('div');
-      m.style.cssText = `position:absolute;left:0;right:0;bottom:${pct}%;height:4px;transform:translateY(50%);border-radius:2px;background:${e.type==='pee'?'rgba(255,200,55,.8)':'#c87941'}`;
-      m.title = (e.type === 'pee' ? '💧' : '💩') + ' ' + timeStr;
+      const isPee = e.type === 'pee';
+      m.style.cssText = `position:absolute;left:0;right:0;bottom:${pct}%;height:12px;transform:translateY(50%);border-radius:3px;background:${isPee?'rgba(255,200,55,.8)':'#c87941'};display:flex;align-items:center;justify-content:center;overflow:hidden`;
+      const timeLabel = document.createElement('span');
+      timeLabel.style.cssText = `font-size:.38rem;font-weight:600;color:${isPee?'rgba(0,0,0,.6)':'rgba(255,255,255,.75)'};letter-spacing:.2px;white-space:nowrap;line-height:1;pointer-events:none`;
+      timeLabel.textContent = timeStr;
+      m.appendChild(timeLabel);
+      m.title = (isPee ? '💧' : '💩') + ' ' + timeStr;
       col.appendChild(m);
     });
     chartRow.appendChild(col);
