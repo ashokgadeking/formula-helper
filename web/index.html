@@ -71,9 +71,11 @@ button:active{transform:scale(.96);filter:brightness(.85)}
 .log-btn{background:var(--yellow-bg)!important;color:var(--yellow)!important}
 .samples-btn{background:var(--blue-bg)!important;color:var(--blue)!important}
 .custom-btn{background:var(--purple-bg)!important;color:var(--purple)!important}
-.pee-btn{grid-column:span 3!important;background:rgba(255,200,55,.06)!important;color:var(--yellow)!important;height:110px!important}
-.poo-btn{grid-column:span 3!important;background:rgba(200,121,65,.08)!important;color:#c87941!important;height:110px!important}
-.pee-btn .d-sub,.poo-btn .d-sub{font-size:.6rem;opacity:.5;display:block;font-weight:500;letter-spacing:.5px;margin-top:3px}
+.pee-btn{grid-column:span 3!important;background:rgba(255,200,55,.06)!important;color:var(--yellow)!important;height:110px!important;position:relative}
+.poo-btn{grid-column:span 3!important;background:rgba(200,121,65,.08)!important;color:#c87941!important;height:110px!important;position:relative}
+.pee-btn .btn-label,.poo-btn .btn-label{font-size:1.15rem;font-weight:700;letter-spacing:.3px}
+.pee-btn .d-sub,.poo-btn .d-sub{font-size:.6rem;opacity:.55;font-weight:500;letter-spacing:.5px;
+  position:absolute;bottom:10px;left:0;right:0;text-align:center}
 
 /* ── Log tabs ────────────────────────────────────── */
 .log-tabs{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border);flex-shrink:0;border-bottom:1px solid var(--border)}
@@ -306,8 +308,8 @@ input{-webkit-user-select:text;user-select:text}
     <button class="start-btn" onclick="startTimer(90)"><span class="num">90</span><span class="ml-unit">ml</span></button>
     <button class="start-btn" onclick="startTimer(100)"><span class="num">100</span><span class="ml-unit">ml</span></button>
     <button class="start-btn" onclick="startTimer(120)"><span class="num">120</span><span class="ml-unit">ml</span></button>
-    <button class="pee-btn" onclick="logDiaper('pee')">💧 Pee<span class="d-sub" id="pee-today-count"></span></button>
-    <button class="poo-btn" onclick="logDiaper('poo')">💩 Poo<span class="d-sub" id="poo-today-count"></span></button>
+    <button class="pee-btn" onclick="logDiaper('pee')"><span class="btn-label">💧 Pee</span><span class="d-sub" id="pee-today-count"></span></button>
+    <button class="poo-btn" onclick="logDiaper('poo')"><span class="btn-label">💩 Poo</span><span class="d-sub" id="poo-today-count"></span></button>
     <button class="log-btn" onclick="showScreen('log')">Log</button>
     <button class="samples-btn" onclick="showScreen('samples')">Sample Sizes</button>
     <button class="custom-btn" onclick="showScreen('calculator')">Custom Amount</button>
