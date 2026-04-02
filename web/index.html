@@ -178,6 +178,12 @@ input{-webkit-user-select:text;user-select:text}
 .trends-chart{flex:1;padding:4px 14px 8px;position:relative;min-height:0;overflow:hidden}
 .trends-chart canvas{position:absolute;top:0;left:14px;right:14px;bottom:8px;
   width:calc(100% - 28px)!important;height:calc(100% - 8px)!important}
+.diaper-timeline{position:absolute;inset:0;overflow-y:auto;padding:10px 16px}
+.dtl-row{display:flex;align-items:center;gap:10px;margin-bottom:9px}
+.dtl-label{font-size:.6rem;color:var(--dim);width:44px;flex-shrink:0;text-align:right;letter-spacing:.3px;line-height:1.2}
+.dtl-track{position:relative;flex:1;height:8px;background:rgba(255,200,55,.12);border-radius:4px}
+.dtl-pee{position:absolute;top:50%;transform:translate(-50%,-50%);width:3px;height:16px;background:rgba(255,200,55,.75);border-radius:2px;z-index:1}
+.dtl-poo{position:absolute;top:50%;transform:translate(-50%,-50%);width:9px;height:22px;background:#c87941;border-radius:2px;z-index:2;box-shadow:0 0 5px rgba(200,121,65,.4)}
 .trends-summary{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;padding:10px 14px;flex-shrink:0}
 .trends-stat{background:var(--card2);border-radius:var(--radius);padding:14px 8px;
   text-align:center;border:1px solid var(--border);border-top-width:2px;overflow:hidden}
@@ -341,7 +347,7 @@ input{-webkit-user-select:text;user-select:text}
     <div class="trends-stat" style="border-top-color:var(--yellow)"><div class="trends-stat-val" id="dt-pee" style="color:var(--yellow)">0</div><div class="trends-stat-lbl">💧 Pee</div></div>
     <div class="trends-stat" style="border-top-color:#c87941"><div class="trends-stat-val" id="dt-poo" style="color:#c87941">0</div><div class="trends-stat-lbl">💩 Poo</div></div>
   </div>
-  <div class="trends-chart"><canvas id="diaper-trends-canvas"></canvas></div>
+  <div class="trends-chart"><div id="diaper-timeline" class="diaper-timeline"></div></div>
   <div class="bottom-bar single">
     <button onclick="showScreen('log')">Back</button>
   </div>
@@ -1261,99 +1267,63 @@ function updateDiaperTrends() {
   else if (diaperTrendRange === 'year') cutoff = new Date(now - 365 * 86400000);
   else cutoff = new Date(0);
 
-  const dailyPee = {}, dailyPoo = {};
   let totalPee = 0, totalPoo = 0;
-
+  const byDate = {};
   for (const e of diaperLog) {
     const dateKey = (e.date || '').split(' ')[0];
     if (!dateKey) continue;
-    const d = new Date(dateKey + 'T00:00:00');
-    if (d < cutoff) continue;
-    if (e.type === 'pee') { dailyPee[dateKey] = (dailyPee[dateKey] || 0) + 1; totalPee++; }
-    else if (e.type === 'poo') { dailyPoo[dateKey] = (dailyPoo[dateKey] || 0) + 1; totalPoo++; }
+    if (new Date(dateKey + 'T00:00:00') < cutoff) continue;
+    if (e.type === 'pee') totalPee++;
+    else if (e.type === 'poo') totalPoo++;
+    if (!byDate[dateKey]) byDate[dateKey] = [];
+    byDate[dateKey].push(e);
   }
 
   document.getElementById('dt-total').textContent = totalPee + totalPoo;
   document.getElementById('dt-pee').textContent = totalPee;
   document.getElementById('dt-poo').textContent = totalPoo;
 
-  const allDates = [...new Set([...Object.keys(dailyPee), ...Object.keys(dailyPoo)])].sort();
+  const container = document.getElementById('diaper-timeline');
+  container.innerHTML = '';
+  const allDates = Object.keys(byDate).sort();
   if (!allDates.length) {
-    if (diaperTrendChart) { diaperTrendChart.destroy(); diaperTrendChart = null; }
+    container.innerHTML = '<div style="text-align:center;color:var(--dim);font-size:.8rem;padding:24px">No data</div>';
     return;
   }
 
-  const labels = [], dataPee = [], dataPoo = [], isoLabels = [];
-  let cur = new Date(allDates[0] + 'T00:00:00');
-  const end = new Date(allDates[allDates.length - 1] + 'T00:00:00');
-  while (cur <= end) {
-    const k = localDateStr(cur);
-    isoLabels.push(k);
-    labels.push(formatChartDateLabel(k));
-    dataPee.push(dailyPee[k] || 0);
-    dataPoo.push(dailyPoo[k] || 0);
-    cur.setDate(cur.getDate() + 1);
+  for (const dateKey of allDates) {
+    const dayEntries = byDate[dateKey].sort((a, b) => (a.date||'').localeCompare(b.date||''));
+    const row = document.createElement('div');
+    row.className = 'dtl-row';
+    const lbl = document.createElement('div');
+    lbl.className = 'dtl-label';
+    lbl.textContent = formatChartDateLabel(dateKey);
+    row.appendChild(lbl);
+    const track = document.createElement('div');
+    track.className = 'dtl-track';
+    for (const e of dayEntries) {
+      const timeStr = (e.date || '').replace(/^\d{4}-\d{2}-\d{2}\s*/, '');
+      const pct = (parseTimeToMins(timeStr) / 1440) * 100;
+      const marker = document.createElement('div');
+      marker.className = 'dtl-' + e.type;
+      marker.style.left = pct + '%';
+      marker.title = (e.type === 'pee' ? '💧' : '💩') + ' ' + timeStr;
+      track.appendChild(marker);
+    }
+    row.appendChild(track);
+    container.appendChild(row);
   }
+}
 
-  const ctx = document.getElementById('diaper-trends-canvas');
-  if (diaperTrendChart) diaperTrendChart.destroy();
-  diaperTrendChart = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels,
-      datasets: [
-        {
-          label: '💧 Pee',
-          data: dataPee,
-          backgroundColor: 'rgba(255,200,55,0.5)',
-          borderColor: 'rgba(255,200,55,0.7)',
-          borderWidth: 1,
-          borderRadius: {topLeft: 0, topRight: 0, bottomLeft: 6, bottomRight: 6},
-          stack: 'diaper',
-        },
-        {
-          label: '💩 Poo',
-          data: dataPoo,
-          backgroundColor: 'rgba(200,121,65,0.5)',
-          borderColor: 'rgba(200,121,65,0.7)',
-          borderWidth: 1,
-          borderRadius: {topLeft: 6, topRight: 6, bottomLeft: 0, bottomRight: 0},
-          stack: 'diaper',
-        },
-      ],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: {display: true, labels: {color: '#6e6e87', font: {family: 'Outfit', size: 10}, boxWidth: 12, padding: 12}},
-        tooltip: {
-          backgroundColor: 'rgba(20,20,34,0.95)',
-          titleColor: '#ebebf5',
-          bodyColor: '#6e6e87',
-          borderColor: 'rgba(255,255,255,0.06)',
-          borderWidth: 1,
-          cornerRadius: 10,
-          padding: 12,
-          titleFont: {family: 'Outfit', weight: '600'},
-          bodyFont: {family: 'Outfit'},
-        }
-      },
-      scales: {
-        x: {
-          stacked: true,
-          ticks: {color: '#4a4a62', font: {size: 10, family: 'Outfit', weight: '500'}, maxRotation: 45},
-          grid: {color: 'rgba(255,255,255,0.03)'},
-        },
-        y: {
-          stacked: true,
-          beginAtZero: true,
-          ticks: {color: '#4a4a62', font: {family: 'Outfit', weight: '500'}, stepSize: 1, precision: 0},
-          grid: {color: 'rgba(255,255,255,0.03)'},
-        },
-      },
-    },
-  });
+function parseTimeToMins(timeStr) {
+  const m = (timeStr || '').match(/(\d+):(\d+)\s*(AM|PM)/i);
+  if (!m) return 720;
+  let h = parseInt(m[1]);
+  const min = parseInt(m[2]);
+  const ampm = m[3].toUpperCase();
+  if (ampm === 'PM' && h !== 12) h += 12;
+  if (ampm === 'AM' && h === 12) h = 0;
+  return h * 60 + min;
 }
 
 // ── Trends ──────────────────────────────────────
