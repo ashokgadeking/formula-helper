@@ -332,9 +332,9 @@ input{-webkit-user-select:text;user-select:text}
     <div class="trends-header-title">Diaper Log</div>
   </div>
   <div class="trends-tabs">
-    <button class="trends-tab active" onclick="setDiaperTrendRange('week',this)">Week</button>
+    <button class="trends-tab active" onclick="setDiaperTrendRange('today',this)">Today</button>
+    <button class="trends-tab" onclick="setDiaperTrendRange('week',this)">Week</button>
     <button class="trends-tab" onclick="setDiaperTrendRange('month',this)">Month</button>
-    <button class="trends-tab" onclick="setDiaperTrendRange('year',this)">Year</button>
     <button class="trends-tab" onclick="setDiaperTrendRange('all',this)">All</button>
   </div>
   <div class="trends-summary" id="diaper-trends-summary">
@@ -1121,7 +1121,7 @@ function parseWeightCsv(text) {
 
 // ── Diaper ──────────────────────────────────────
 let diaperLog = [];
-let diaperTrendRange = 'week';
+let diaperTrendRange = 'today';
 let diaperTrendChart = null;
 
 function updateDiaperCounts() {
@@ -1257,9 +1257,9 @@ function setDiaperTrendRange(range, btn) {
 function updateDiaperTrends() {
   const now = new Date();
   let cutoff;
-  if (diaperTrendRange === 'week') cutoff = new Date(now - 7 * 86400000);
+  if (diaperTrendRange === 'today') cutoff = new Date(localDateStr(now) + 'T00:00:00');
+  else if (diaperTrendRange === 'week') cutoff = new Date(now - 7 * 86400000);
   else if (diaperTrendRange === 'month') cutoff = new Date(now - 30 * 86400000);
-  else if (diaperTrendRange === 'year') cutoff = new Date(now - 365 * 86400000);
   else cutoff = new Date(0);
 
   let totalPee = 0, totalPoo = 0;
@@ -1293,7 +1293,7 @@ function updateDiaperTrends() {
   // Y-axis
   const yAxis = document.createElement('div');
   yAxis.style.cssText = 'width:26px;flex-shrink:0;position:relative;margin-bottom:22px';
-  ['12a','6a','12p','6p','12a'].forEach((t, i) => {
+  ['12a','6p','12p','6a','12a'].forEach((t, i) => {
     const el = document.createElement('div');
     el.style.cssText = `position:absolute;right:4px;top:${i*25}%;transform:translateY(-50%);font-size:.46rem;color:var(--dim);letter-spacing:.3px;white-space:nowrap`;
     el.textContent = t;
@@ -1328,7 +1328,7 @@ function updateDiaperTrends() {
       const timeStr = (e.date || '').replace(/^\d{4}-\d{2}-\d{2}\s*/, '');
       const pct = (parseTimeToMins(timeStr) / 1440) * 100;
       const m = document.createElement('div');
-      m.style.cssText = `position:absolute;left:0;right:0;top:${pct}%;height:4px;transform:translateY(-50%);border-radius:2px;background:${e.type==='pee'?'rgba(255,200,55,.8)':'#c87941'}`;
+      m.style.cssText = `position:absolute;left:0;right:0;bottom:${pct}%;height:4px;transform:translateY(50%);border-radius:2px;background:${e.type==='pee'?'rgba(255,200,55,.8)':'#c87941'}`;
       m.title = (e.type === 'pee' ? '💧' : '💩') + ' ' + timeStr;
       col.appendChild(m);
     });
