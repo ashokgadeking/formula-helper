@@ -76,6 +76,8 @@ button:active{transform:scale(.96);filter:brightness(.85)}
 .pee-btn .btn-label,.poo-btn .btn-label{font-size:1.15rem;font-weight:700;letter-spacing:.3px}
 .pee-btn .d-sub,.poo-btn .d-sub{font-size:.6rem;opacity:.55;font-weight:500;letter-spacing:.5px;
   position:absolute;bottom:10px;left:0;right:0;text-align:center}
+.pee-btn .d-top,.poo-btn .d-top{font-size:.6rem;opacity:.55;font-weight:500;letter-spacing:.5px;
+  position:absolute;top:10px;left:0;right:0;text-align:center}
 
 /* ── Log tabs ────────────────────────────────────── */
 .log-tabs{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border);flex-shrink:0;border-bottom:1px solid var(--border)}
@@ -304,15 +306,12 @@ input{-webkit-user-select:text;user-select:text}
     </div>
   </div>
   <div class="diaper-toast" id="main-diaper-toast"></div>
-  <div id="last-diaper-bar" style="text-align:center;font-size:.75rem;font-weight:500;
-    letter-spacing:.3px;opacity:.5;padding:8px 16px;flex-shrink:0;
-    border-top:1px solid var(--border);background:var(--bg2)"></div>
   <div class="btn-grid">
     <button class="start-btn" onclick="startTimer(90)"><span class="num">90</span><span class="ml-unit">ml</span></button>
     <button class="start-btn" onclick="startTimer(100)"><span class="num">100</span><span class="ml-unit">ml</span></button>
     <button class="start-btn" onclick="startTimer(120)"><span class="num">120</span><span class="ml-unit">ml</span></button>
-    <button class="pee-btn" onclick="logDiaper('pee')"><span class="btn-label">💧 Pee</span><span class="d-sub" id="pee-today-count"></span></button>
-    <button class="poo-btn" onclick="logDiaper('poo')"><span class="btn-label">💩 Poo</span><span class="d-sub" id="poo-today-count"></span></button>
+    <button class="pee-btn" onclick="logDiaper('pee')"><span class="d-top" id="pee-last-changed"></span><span class="btn-label">💧 Pee</span><span class="d-sub" id="pee-today-count"></span></button>
+    <button class="poo-btn" onclick="logDiaper('poo')"><span class="d-top" id="poo-last-changed"></span><span class="btn-label">💩 Poo</span><span class="d-sub" id="poo-today-count"></span></button>
     <button class="log-btn" onclick="showScreen('log')">Log</button>
     <button class="samples-btn" onclick="showScreen('samples')">Sample Sizes</button>
     <button class="custom-btn" onclick="showScreen('calculator')">Custom Amount</button>
@@ -1138,18 +1137,17 @@ function updateDiaperCounts() {
   if (peeEl) peeEl.textContent = pee ? pee + ' today' : '';
   if (pooEl) pooEl.textContent = poo ? poo + ' today' : '';
 
-  const bar = document.getElementById('last-diaper-bar');
-  if (!bar) return;
-  if (!diaperLog.length) {
-    bar.textContent = 'No diapers logged yet';
-    return;
-  }
+  const peeTop = document.getElementById('pee-last-changed');
+  const pooTop = document.getElementById('poo-last-changed');
+  if (peeTop) peeTop.textContent = '';
+  if (pooTop) pooTop.textContent = '';
+  if (!diaperLog.length) return;
   const last = diaperLog[diaperLog.length - 1];
-  const emoji = last.type === 'pee' ? '💧' : '💩';
   const timeStr = (last.date || '').replace(/^\d{4}-\d{2}-\d{2}\s*/, '');
   const dateStr = (last.date || '').split(' ')[0];
   const label = dateStr === today ? timeStr : (formatDateLabel(dateStr) + ' · ' + timeStr);
-  bar.textContent = 'Last diaper  ·  ' + emoji + ' ' + label;
+  const targetTop = last.type === 'pee' ? peeTop : pooTop;
+  if (targetTop) targetTop.textContent = 'last changed: ' + label;
 }
 
 async function logDiaper(type) {
