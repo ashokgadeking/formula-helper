@@ -175,6 +175,8 @@ input{-webkit-user-select:text;user-select:text}
 .trends-tab.active{background:var(--blue-bg);color:var(--blue);border-color:var(--blue-border)}
 #weight-toggle-btn.active{background:var(--green-bg);color:var(--green);border-color:var(--green-border)}
 #weight-toggle-btn{margin-left:auto}
+#formula-toggle-btn.active{background:var(--blue-bg);color:var(--blue);border-color:var(--blue-border)}
+#formula-toggle-btn{margin-left:auto}
 .trends-chart{flex:1;padding:4px 14px 8px;position:relative;min-height:0;overflow:hidden}
 .trends-chart canvas{position:absolute;top:0;left:14px;right:14px;bottom:8px;
   width:calc(100% - 28px)!important;height:calc(100% - 8px)!important}
@@ -336,6 +338,7 @@ input{-webkit-user-select:text;user-select:text}
     <button class="trends-tab" onclick="setDiaperTrendRange('week',this)">Week</button>
     <button class="trends-tab" onclick="setDiaperTrendRange('month',this)">Month</button>
     <button class="trends-tab" onclick="setDiaperTrendRange('all',this)">All</button>
+    <button id="formula-toggle-btn" class="trends-tab" onclick="toggleFormulaOverlay(this)">🍼 Formula</button>
   </div>
   <div class="trends-summary" id="diaper-trends-summary">
     <div class="trends-stat" style="border-top-color:var(--blue)"><div class="trends-stat-val" id="dt-total" style="color:var(--blue)">0</div><div class="trends-stat-lbl">Total</div></div>
@@ -1046,6 +1049,12 @@ function toggleWeightOverlay(btn) {
   updateTrends();
 }
 
+function toggleFormulaOverlay(btn) {
+  showFormulaOverlay = !showFormulaOverlay;
+  btn.classList.toggle('active', showFormulaOverlay);
+  updateDiaperTrends();
+}
+
 function handleWeightCsvUpload(input) {
   const file = input.files[0];
   if (!file) return;
@@ -1123,6 +1132,7 @@ function parseWeightCsv(text) {
 let diaperLog = [];
 let diaperTrendRange = 'today';
 let diaperTrendChart = null;
+let showFormulaOverlay = false;
 
 function updateDiaperCounts() {
   const today = localDateStr(new Date());
@@ -1319,17 +1329,48 @@ function updateDiaperTrends() {
     chartRow.appendChild(line);
   });
 
+  // Build formula-by-date map if overlay is on
+  const formulaByDate = {};
+  if (showFormulaOverlay && state.mix_log) {
+    for (const e of state.mix_log) {
+      const d = parseEntryDate(e);
+      const ml = entryMl(e);
+      if (!d || !ml) continue;
+      if (d < cutoff) continue;
+      const dk = localDateStr(d);
+      if (!formulaByDate[dk]) formulaByDate[dk] = [];
+      formulaByDate[dk].push({timeStr: (e.date||'').replace(/^\d{4}-\d{2}-\d{2}\s*/,''), ml});
+    }
+  }
+
   // Day columns
   allDates.forEach(dateKey => {
     const dayEntries = (byDate[dateKey] || []).sort((a, b) => (a.date||'').localeCompare(b.date||''));
     const col = document.createElement('div');
     col.style.cssText = `flex:1;min-width:${MIN_COL}px;position:relative;background:rgba(255,200,55,.07);border-radius:3px;z-index:1`;
+
+    // Formula bars (behind diaper bars)
+    if (showFormulaOverlay) {
+      (formulaByDate[dateKey] || []).forEach(f => {
+        const pct = (parseTimeToMins(f.timeStr) / 1440) * 100;
+        const fm = document.createElement('div');
+        fm.style.cssText = `position:absolute;left:0;right:0;bottom:${pct}%;height:18px;transform:translateY(50%);border-radius:3px;background:rgba(90,170,255,.55);display:flex;align-items:center;justify-content:center;overflow:hidden;z-index:1`;
+        const fl = document.createElement('span');
+        fl.style.cssText = `font-size:.52rem;font-weight:600;color:rgba(255,255,255,.85);letter-spacing:.2px;white-space:nowrap;line-height:1;pointer-events:none`;
+        fl.textContent = f.timeStr + ' · ' + f.ml + 'ml';
+        fm.appendChild(fl);
+        fm.title = '🍼 ' + f.timeStr + ' · ' + f.ml + 'ml';
+        col.appendChild(fm);
+      });
+    }
+
+    // Diaper bars (on top)
     dayEntries.forEach(e => {
       const timeStr = (e.date || '').replace(/^\d{4}-\d{2}-\d{2}\s*/, '');
       const pct = (parseTimeToMins(timeStr) / 1440) * 100;
       const m = document.createElement('div');
       const isPee = e.type === 'pee';
-      m.style.cssText = `position:absolute;left:0;right:0;bottom:${pct}%;height:18px;transform:translateY(50%);border-radius:3px;background:${isPee?'rgba(255,200,55,.8)':'#c87941'};display:flex;align-items:center;justify-content:center;overflow:hidden`;
+      m.style.cssText = `position:absolute;left:0;right:0;bottom:${pct}%;height:18px;transform:translateY(50%);border-radius:3px;background:${isPee?'rgba(255,200,55,.8)':'#c87941'};display:flex;align-items:center;justify-content:center;overflow:hidden;z-index:2`;
       const timeLabel = document.createElement('span');
       timeLabel.style.cssText = `font-size:.52rem;font-weight:600;color:${isPee?'rgba(0,0,0,.6)':'rgba(255,255,255,.75)'};letter-spacing:.2px;white-space:nowrap;line-height:1;pointer-events:none`;
       timeLabel.textContent = timeStr;
