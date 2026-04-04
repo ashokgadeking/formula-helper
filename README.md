@@ -68,6 +68,20 @@ aws s3 cp web/index.html s3://formula-helper-web/index.html --profile viper
 aws cloudfront create-invalidation --distribution-id <dist-id> --paths "/index.html" --profile viper
 ```
 
+## Display sleep schedule (Pi)
+
+The script `setup_display_sleep.sh` installs cron jobs to turn the touchscreen off and on at set times using `xset dpms`. It also disables DPMS auto-blanking so the screen stays on at all other times.
+
+```bash
+# Defaults: sleep at 11pm, wake at 7am
+bash setup_display_sleep.sh
+
+# Custom schedule
+bash setup_display_sleep.sh --sleep 22:30 --wake 06:30
+```
+
+To remove or adjust the schedule later, edit your crontab (`crontab -e`) and delete or modify the lines marked `# formula-sleep`.
+
 ## Running tests
 
 ```bash
