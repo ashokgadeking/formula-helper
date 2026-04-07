@@ -1207,7 +1207,9 @@ function _updateDiaperTab() {
   document.getElementById('log-prev').style.visibility = idx > 0 ? 'visible' : 'hidden';
   document.getElementById('log-next').style.visibility = idx >= 0 && idx < dates.length - 1 ? 'visible' : 'hidden';
 
-  const filtered = diaperLog.filter(e => (e.date || '').startsWith(logViewDate));
+  const filtered = diaperLog
+    .filter(e => (e.date || '').startsWith(logViewDate))
+    .sort((a, b) => (parseEntryDate(a) || 0) - (parseEntryDate(b) || 0));
   document.getElementById('log-count').textContent =
     filtered.length ? filtered.length + ' diaper' + (filtered.length !== 1 ? 's' : '') : '';
 
@@ -1348,7 +1350,7 @@ function updateDiaperTrends() {
 
   // Day columns
   allDates.forEach(dateKey => {
-    const dayEntries = (byDate[dateKey] || []).sort((a, b) => (a.date||'').localeCompare(b.date||''));
+    const dayEntries = (byDate[dateKey] || []).sort((a, b) => (parseEntryDate(a) || 0) - (parseEntryDate(b) || 0));
     const col = document.createElement('div');
     col.style.cssText = `flex:1;min-width:${MIN_COL}px;position:relative;background:rgba(255,200,55,.07);border-radius:3px;z-index:1`;
 
