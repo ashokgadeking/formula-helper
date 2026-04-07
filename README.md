@@ -68,6 +68,21 @@ aws s3 cp web/index.html s3://formula-helper-web/index.html --profile viper
 aws cloudfront create-invalidation --distribution-id <dist-id> --paths "/index.html" --profile viper
 ```
 
+## WiFi watchdog (Pi)
+
+The Pi occasionally drops WiFi. `wifi_watchdog.sh` runs every 5 minutes via cron and restarts the WiFi interface if the Pi has been offline for more than 20 minutes.
+
+```bash
+bash setup_wifi_watchdog.sh          # default interface: wlan0
+bash setup_wifi_watchdog.sh wlan1    # custom interface
+```
+
+The setup script installs the watchdog to `/usr/local/bin`, adds a passwordless sudoers entry for the specific `ip link` and `systemctl` commands needed, and creates the cron job. Logs go to `/var/log/wifi_watchdog.log`.
+
+```bash
+tail -f /var/log/wifi_watchdog.log   # monitor
+```
+
 ## Display sleep schedule (Pi)
 
 The script `setup_display_sleep.sh` installs cron jobs to turn the touchscreen off and on at set times using `xset dpms`. It also disables DPMS auto-blanking so the screen stays on at all other times.
