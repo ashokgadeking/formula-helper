@@ -308,9 +308,9 @@ input{-webkit-user-select:text;user-select:text}
     <div class="progress-track" id="progress-track" style="display:none">
       <div class="progress-fill" id="progress-fill"></div>
     </div>
-    <div id="next-feeding-bar" style="font-size:.75rem;color:var(--dim);opacity:.5;margin-top:10px;letter-spacing:.3px;font-weight:500"></div>
   </div>
   <div class="diaper-toast" id="main-diaper-toast"></div>
+  <div id="next-feeding-bar" style="text-align:center;font-size:.72rem;color:var(--dim);opacity:.3;padding:5px 16px;flex-shrink:0;font-weight:500;letter-spacing:.3px;display:none"></div>
   <div class="btn-grid">
     <button class="start-btn" onclick="startTimer(90)"><span class="num">90</span><span class="ml-unit">ml</span></button>
     <button class="start-btn" onclick="startTimer(100)"><span class="num">100</span><span class="ml-unit">ml</span></button>
@@ -1663,19 +1663,20 @@ function computeAvgGaps() {
 function updateNextFeedingBar() {
   const bar = document.getElementById('next-feeding-bar');
   if (!bar) return;
-  if (!state.mix_log) { bar.textContent = ''; return; }
+  if (!state.mix_log) { bar.textContent = ''; bar.style.display = 'none'; return; }
   const withDates = state.mix_log
     .filter(e => parseEntryDate(e) && entryMl(e))
     .sort((a, b) => (parseEntryDate(a) || 0) - (parseEntryDate(b) || 0));
-  if (!withDates.length) { bar.textContent = ''; return; }
+  if (!withDates.length) { bar.textContent = ''; bar.style.display = 'none'; return; }
   const lastDt = parseEntryDate(withDates[withDates.length - 1]);
-  if (!lastDt) { bar.textContent = ''; return; }
+  if (!lastDt) { bar.textContent = ''; bar.style.display = 'none'; return; }
   const h = lastDt.getHours();
   const gapMins = (h >= 10 && h < 22) ? avgDayGapMins : avgNightGapMins;
-  if (gapMins === null) { bar.textContent = ''; return; }
+  if (gapMins === null) { bar.textContent = ''; bar.style.display = 'none'; return; }
   const nextDt = new Date(lastDt.getTime() + gapMins * 60000);
   const timeStr = nextDt.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit', hour12:true}).toLowerCase();
   bar.textContent = 'estimated next feeding ~ ' + timeStr;
+  bar.style.display = 'block';
 }
 
 async function pollState() {
