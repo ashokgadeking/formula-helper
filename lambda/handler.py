@@ -882,7 +882,7 @@ def delete_diaper(event):
 
 
 def post_reset_timer(event):
-    _put_timer_state(0.0, "", 0, False)
+    _restore_state_from_log()
     return _json_response({"ok": True})
 
 
