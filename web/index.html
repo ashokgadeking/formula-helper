@@ -181,7 +181,8 @@ input{-webkit-user-select:text;user-select:text}
 .trends-chart canvas{position:absolute;top:0;left:14px;right:14px;bottom:8px;
   width:calc(100% - 28px)!important;height:calc(100% - 8px)!important}
 .diaper-timeline{position:absolute;inset:0;overflow:hidden}
-.trends-summary{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;padding:10px 14px;flex-shrink:0}
+.trends-summary{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;padding:10px 14px 6px;flex-shrink:0}
+.trends-insights{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:0 14px 10px;flex-shrink:0}
 .trends-stat{background:var(--card2);border-radius:var(--radius);padding:14px 8px;
   text-align:center;border:1px solid var(--border);border-top-width:2px;overflow:hidden}
 .trends-stat-val{font-size:1.8rem;font-weight:700;letter-spacing:-.5px;line-height:1}
@@ -389,6 +390,10 @@ input{-webkit-user-select:text;user-select:text}
     <div class="trends-stat" style="border-top-color:var(--blue)"><div class="trends-stat-val" id="ts-total" style="color:var(--blue)">0</div><div class="trends-stat-lbl">Total ml</div></div>
     <div class="trends-stat" style="border-top-color:var(--green)"><div class="trends-stat-val" id="ts-count" style="color:var(--green)">0</div><div class="trends-stat-lbl">Bottles</div></div>
     <div class="trends-stat" style="border-top-color:var(--yellow)"><div class="trends-stat-val" id="ts-avg" style="color:var(--yellow)">0</div><div class="trends-stat-lbl">Avg ml/day</div></div>
+  </div>
+  <div class="trends-insights">
+    <div class="trends-stat" style="border-top-color:var(--yellow)"><div class="trends-stat-val" id="ts-day-gap" style="color:var(--yellow);font-size:1.3rem">—</div><div class="trends-stat-lbl">☀️ Avg gap · Day</div></div>
+    <div class="trends-stat" style="border-top-color:var(--purple)"><div class="trends-stat-val" id="ts-night-gap" style="color:var(--purple);font-size:1.3rem">—</div><div class="trends-stat-lbl">🌙 Avg gap · Night</div></div>
   </div>
   <div class="trends-chart"><canvas id="trends-canvas"></canvas></div>
   <div class="bottom-bar split">
@@ -1517,6 +1522,30 @@ function updateTrends() {
   document.getElementById('ts-total').textContent = totalMl;
   document.getElementById('ts-count').textContent = count;
   document.getElementById('ts-avg').textContent = Math.round(totalMl / numDays);
+
+  // Average gap between feedings: day (10am–10pm) vs night (10pm–10am)
+  const sorted = state.mix_log
+    .filter(e => { const d = parseEntryDate(e); return d && d >= cutoff && entryMl(e); })
+    .sort((a, b) => (parseEntryDate(a) || 0) - (parseEntryDate(b) || 0));
+  const dayGaps = [], nightGaps = [];
+  for (let i = 1; i < sorted.length; i++) {
+    const prev = parseEntryDate(sorted[i - 1]);
+    const curr = parseEntryDate(sorted[i]);
+    if (!prev || !curr) continue;
+    const gapMins = (curr - prev) / 60000;
+    if (gapMins <= 0) continue;
+    const h = prev.getHours();
+    (h >= 10 && h < 22 ? dayGaps : nightGaps).push(gapMins);
+  }
+  const fmtGap = mins => {
+    if (mins === null) return '—';
+    const h = Math.floor(mins / 60), m = Math.round(mins % 60);
+    return h === 0 ? m + 'm' : m === 0 ? h + 'h' : h + 'h ' + m + 'm';
+  };
+  const avgDay   = dayGaps.length   ? dayGaps.reduce((a, b) => a + b, 0)   / dayGaps.length   : null;
+  const avgNight = nightGaps.length ? nightGaps.reduce((a, b) => a + b, 0) / nightGaps.length : null;
+  document.getElementById('ts-day-gap').textContent   = fmtGap(avgDay);
+  document.getElementById('ts-night-gap').textContent = fmtGap(avgNight);
 
   // Chart
   const ctx = document.getElementById('trends-canvas');
