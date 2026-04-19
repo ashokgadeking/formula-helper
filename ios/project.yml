@@ -1,0 +1,90 @@
+name: FormulaHelper
+options:
+  bundleIdPrefix: com.ashokteja
+  deploymentTarget:
+    iOS: "18.0"
+  defaultConfig: Debug
+  xcodeVersion: "16"
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+
+targets:
+  FormulaHelper:
+    type: application
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: FormulaHelper
+    assets: FormulaHelper/Resources/Assets.xcassets
+    info:
+      path: FormulaHelper/Info.plist
+      properties:
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        CFBundleDisplayName: Formula Helper
+        ITSAppUsesNonExemptEncryption: false
+        NSSupportsLiveActivities: true
+        UIAppFonts:
+          - Outfit-Variable.ttf
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ashokteja.formulahelper
+        INFOPLIST_FILE: FormulaHelper/Info.plist
+        DEVELOPMENT_TEAM: "TV6FL9FHCE"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+      configs:
+        Debug:
+          CODE_SIGN_STYLE: Automatic
+        Release:
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: "Apple Distribution: ASHOK TEJA GADEPALLI (TV6FL9FHCE)"
+          PROVISIONING_PROFILE_SPECIFIER: FormulaHelperAppStore
+          PROVISIONING_PROFILE: "0a11f570-f456-4eb4-a271-4a5198020e68"
+    entitlements:
+      path: FormulaHelper/FormulaHelper.entitlements
+      properties:
+        com.apple.developer.associated-domains:
+          - webcredentials:d20oyc88hlibbe.cloudfront.net
+          - webcredentials:d20oyc88hlibbe.cloudfront.net?mode=developer
+        com.apple.security.application-groups:
+          - group.com.ashokteja.formulahelper
+    dependencies:
+      - sdk: Charts.framework
+      - target: FormulaHelperWidgets
+        embed: true
+
+  FormulaHelperWidgets:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: FormulaHelperWidgets
+      - path: FormulaHelper/LiveActivity/FormulaActivityAttributes.swift
+    info:
+      path: FormulaHelperWidgets/Info.plist
+      properties:
+        CFBundleDisplayName: FormulaHelperWidgets
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ashokteja.formulahelper.widgets
+        DEVELOPMENT_TEAM: "TV6FL9FHCE"
+      configs:
+        Debug:
+          CODE_SIGN_STYLE: Automatic
+        Release:
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: "Apple Distribution: ASHOK TEJA GADEPALLI (TV6FL9FHCE)"
+          PROVISIONING_PROFILE_SPECIFIER: FormulaHelperWidgetsAppStore
+          PROVISIONING_PROFILE: "efbe7ee5-50ea-4876-98f9-98a0300c043e"

@@ -159,6 +159,36 @@ Resources:
             Path: /api/diaper/{sk}
             Method: DELETE
             ApiId: !Ref FormulaApi
+        AuthListCredentials:
+          Type: HttpApi
+          Properties:
+            Path: /api/auth/credentials
+            Method: GET
+            ApiId: !Ref FormulaApi
+        AuthDeleteCredential:
+          Type: HttpApi
+          Properties:
+            Path: /api/auth/credentials/{cred_id}
+            Method: DELETE
+            ApiId: !Ref FormulaApi
+        AllowedUsersList:
+          Type: HttpApi
+          Properties:
+            Path: /api/auth/allowed-users
+            Method: GET
+            ApiId: !Ref FormulaApi
+        AllowedUsersAdd:
+          Type: HttpApi
+          Properties:
+            Path: /api/auth/allowed-users
+            Method: POST
+            ApiId: !Ref FormulaApi
+        AllowedUsersRemove:
+          Type: HttpApi
+          Properties:
+            Path: /api/auth/allowed-users/{name}
+            Method: DELETE
+            ApiId: !Ref FormulaApi
 
   # ── HTTP API ────────────────────────────────────────────────────────────────
   FormulaApi:

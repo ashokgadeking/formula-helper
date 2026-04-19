@@ -47,6 +47,8 @@ button:active{transform:scale(.96);filter:brightness(.85)}
 .banner.expired{background:radial-gradient(ellipse at 50% 40%,rgba(255,75,75,.08) 0%,rgba(80,10,10,.4) 100%)}
 .banner-sub{font-size:.85rem;color:var(--dim);margin-bottom:10px;
   letter-spacing:2.5px;font-weight:500;text-transform:uppercase}
+@keyframes btl-fill{0%{transform:translateY(44px)}100%{transform:translateY(0)}}
+.btl-liq{animation:btl-fill 1.4s ease-in-out infinite alternate}
 .banner.expired .banner-sub{color:rgba(255,160,160,.8)}
 .banner-time{font-size:4.2rem;font-weight:700;color:var(--green);
   letter-spacing:-2px;line-height:1}
@@ -69,10 +71,12 @@ button:active{transform:scale(.96);filter:brightness(.85)}
 .start-btn .num{font-size:2.2rem;display:block;line-height:1;font-weight:700;letter-spacing:-1px}
 .start-btn .ml-unit{font-size:.6rem;opacity:.4;display:block;font-weight:500;letter-spacing:.5px;margin-top:3px}
 .log-btn{background:rgba(160,220,255,.08)!important;color:#a0dcff!important}
-.samples-btn{background:var(--blue-bg)!important;color:var(--blue)!important}
 .custom-btn{background:var(--purple-bg)!important;color:var(--purple)!important}
+.start-btn{grid-column:span 2!important}
 .pee-btn{grid-column:span 3!important;background:rgba(255,200,55,.06)!important;color:var(--yellow)!important;height:110px!important;position:relative}
 .poo-btn{grid-column:span 3!important;background:rgba(200,121,65,.08)!important;color:#c87941!important;height:110px!important;position:relative}
+.log-btn{grid-column:span 3!important}
+.custom-btn{grid-column:span 3!important}
 .pee-btn .btn-label,.poo-btn .btn-label{font-size:2.2rem;font-weight:700;letter-spacing:-1px;line-height:1}
 .pee-btn .d-sub,.poo-btn .d-sub{font-size:.6rem;opacity:.55;font-weight:500;letter-spacing:.5px;
   position:absolute;bottom:10px;left:0;right:0;text-align:center}
@@ -84,16 +88,6 @@ button:active{transform:scale(.96);filter:brightness(.85)}
 .log-tabs .trends-tab{border-radius:0;border:none;padding:12px;letter-spacing:.5px;background:var(--bg2)}
 .log-tabs .trends-tab.active{background:var(--blue-bg);color:var(--blue);border:none}
 
-/* ── Samples screen ─────────────────────────────── */
-.samples-grid{flex:1;display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--border)}
-.sample-card{display:flex;flex-direction:column;align-items:center;justify-content:center;
-  background:var(--bg2);position:relative}
-.sample-card:nth-child(even){background:var(--card)}
-.sample-half{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%}
-.sample-half+.sample-half{border-top:1px solid var(--border)}
-.sample-lbl{font-size:.6rem;color:var(--dim);letter-spacing:2px;margin-bottom:6px;font-weight:500}
-.sample-val{font-size:2.6rem;font-weight:700;line-height:1;letter-spacing:-1px}
-.sample-unit{font-size:.8rem;color:var(--dim2);margin-top:6px;font-weight:500}
 .water-val{color:var(--blue)}.powder-val{color:var(--green)}
 
 /* ── Log screen ──────────────────────────────────── */
@@ -298,17 +292,17 @@ input{-webkit-user-select:text;user-select:text}
 <!-- ══ MAIN ══════════════════════════════════════ -->
 <div id="main-screen" class="screen active">
   <div class="banner" id="banner">
-    <div class="gear" onclick="showScreen('settings')">&#9881;</div>
+    <div class="gear" id="gear-btn" onclick="showScreen('settings')" style="display:none">&#9881;</div>
     <div class="countdown-corner" id="cd-corner" style="display:none">
       <div class="countdown-val" id="cd-val"></div>
       <div class="countdown-label">remaining</div>
     </div>
-    <div class="banner-sub" id="banner-sub">NO BOTTLE MIXED YET</div>
+    <div class="banner-sub" id="banner-sub"><svg viewBox="0 0 32 58" width="28" height="44" xmlns="http://www.w3.org/2000/svg"><defs><clipPath id="btl-body-clip"><rect x="4" y="11" width="24" height="44" rx="10"/></clipPath></defs><rect x="13" y="1" width="6" height="7" rx="3" fill="rgba(255,255,255,.75)" stroke="rgba(255,255,255,.75)" stroke-width="1.5"/><rect x="10" y="7" width="12" height="5" fill="rgba(255,255,255,.75)" stroke="rgba(255,255,255,.75)" stroke-width="1.5"/><rect x="4" y="11" width="24" height="44" rx="10" fill="none" stroke="rgba(255,255,255,.25)" stroke-width="1.5"/><g clip-path="url(#btl-body-clip)"><rect class="btl-liq" x="4" y="11" width="24" height="44" fill="rgba(235,230,220,.35)"/></g></svg></div>
     <div class="banner-time" id="banner-time" style="display:none"></div>
     <div class="progress-track" id="progress-track" style="display:none">
       <div class="progress-fill" id="progress-fill"></div>
     </div>
-    <div id="next-feeding-bar" style="position:absolute;bottom:10px;left:0;right:0;text-align:center;font-size:.72rem;color:var(--dim);opacity:.3;font-weight:500;letter-spacing:.3px;display:none"></div>
+    <div id="next-feeding-bar" style="position:absolute;bottom:10px;left:0;right:0;text-align:center;font-size:.85rem;color:var(--dim);font-weight:500;letter-spacing:2.5px;text-transform:uppercase;display:none"></div>
   </div>
   <div class="diaper-toast" id="main-diaper-toast"></div>
   <div class="btn-grid">
@@ -318,17 +312,11 @@ input{-webkit-user-select:text;user-select:text}
     <button class="pee-btn" onclick="logDiaper('pee')"><span class="d-top" id="pee-last-changed"></span><span class="btn-label">💧 Pee</span><span class="d-sub" id="pee-today-count"></span></button>
     <button class="poo-btn" onclick="logDiaper('poo')"><span class="d-top" id="poo-last-changed"></span><span class="btn-label">💩 Poo</span><span class="d-sub" id="poo-today-count"></span></button>
     <button class="log-btn" onclick="showScreen('log')">Log</button>
-    <button class="samples-btn" onclick="showScreen('samples')">Sample Sizes</button>
     <button class="custom-btn" onclick="showScreen('calculator')">Custom Amount</button>
   </div>
 </div>
 
 <!-- ══ SAMPLES ═══════════════════════════════════ -->
-<div id="samples-screen" class="screen">
-  <div class="samples-grid" id="samples-grid"></div>
-  <div class="bottom-bar single"><button onclick="showScreen('main')">Back</button></div>
-</div>
-
 <!-- ══ DIAPER TRENDS ══════════════════════════════ -->
 <div id="diaper-trends-screen" class="screen">
   <div class="trends-header">
@@ -476,7 +464,22 @@ input{-webkit-user-select:text;user-select:text}
 <!-- ══ SETTINGS ══════════════════════════════════ -->
 <div id="settings-screen" class="screen">
   <div class="settings-title">SETTINGS</div>
-  <div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:28px">
+  <div class="log-tabs">
+    <button class="trends-tab active" id="stab-users" onclick="showSettingsTab('users',this)">Users</button>
+    <button class="trends-tab" id="stab-timer" onclick="showSettingsTab('timer',this)">Timer</button>
+  </div>
+
+  <!-- Users tab -->
+  <div id="settings-tab-users" style="flex:1;display:flex;flex-direction:column;padding:16px;gap:10px;overflow-y:auto">
+    <div style="display:flex;gap:10px">
+      <input class="auth-name-input" id="settings-new-user" type="text" placeholder="Invite user by name" autocomplete="off" style="flex:1">
+      <button style="padding:12px 20px;border-radius:var(--radius-sm);font-size:.85rem;font-weight:600;background:var(--green-bg);color:var(--green);border:1px solid var(--green-border)" onclick="addAllowedUser()">Invite</button>
+    </div>
+    <div id="users-list" style="display:flex;flex-direction:column;gap:8px"></div>
+  </div>
+
+  <!-- Timer tab -->
+  <div id="settings-tab-timer" style="flex:1;display:none;flex-direction:column;align-items:center;justify-content:center;gap:32px">
     <div>
       <div class="setting-label">EXPIRY TIMER</div>
       <div class="setting-row">
@@ -493,17 +496,11 @@ input{-webkit-user-select:text;user-select:text}
         <button class="setting-btn setting-plus" onclick="adjSS(1)">+</button>
       </div>
     </div>
-    <div>
-      <div class="setting-label">PASSKEYS</div>
-      <div class="setting-row" style="gap:10px">
-        <input class="auth-name-input" id="settings-device-name" type="text" placeholder="Name" autocomplete="off" style="width:140px">
-        <button style="padding:12px 28px;border-radius:var(--radius-sm);font-size:.85rem;font-weight:600;background:var(--green-bg);color:var(--green);border:1px solid var(--green-border)" onclick="addDeviceFromSettings()">Add</button>
-      </div>
-    </div>
+    <button onclick="resetTimer()" style="padding:14px 40px;border-radius:var(--radius-sm);font-size:.85rem;font-weight:600;background:var(--yellow-bg);color:var(--yellow);border:1px solid var(--yellow-border)">Reset Timer</button>
   </div>
-  <div class="bottom-bar split">
+
+  <div class="bottom-bar">
     <button onclick="showScreen('main')">Back</button>
-    <button onclick="resetTimer()" style="background:var(--yellow-bg);color:var(--yellow)">Reset Timer</button>
   </div>
 </div>
 
@@ -517,8 +514,8 @@ let trendRange = 'week';
 let trendChart = null;
 let weightData = [];       // [{date: 'YYYY-MM-DD', lbs: float}] from state
 let showWeight = false;    // toggle for weight overlay
-let avgDayGapMins = null;
-let avgNightGapMins = null;
+let avgDayRatePerMl = null;   // mins per ml (day: 10am–10pm)
+let avgNightRatePerMl = null; // mins per ml (night: 10pm–10am)
 
 function showScreen(name) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
@@ -528,6 +525,7 @@ function showScreen(name) {
   if (name === 'log') { _initLogViewDate(); updateLog(); }
   if (name === 'trends') { pollState().then(() => updateTrends()); }
   if (name === 'diaper-trends') updateDiaperTrends();
+  if (name === 'settings') { showSettingsTab('users'); loadUsersSection(); updateSettings(); }
 }
 
 function pad2(n) { return String(n).padStart(2, '0'); }
@@ -550,6 +548,20 @@ function progressColor(frac) {
   return 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')';
 }
 
+function showSettingsTab(tab, btn) {
+  ['users', 'timer'].forEach(t => {
+    document.getElementById('settings-tab-' + t).style.display = t === tab ? 'flex' : 'none';
+  });
+  document.querySelectorAll('#settings-screen .trends-tab').forEach(b => b.classList.remove('active'));
+  const active = btn || document.getElementById('stab-' + tab);
+  if (active) active.classList.add('active');
+}
+
+function updateGear() {
+  const gear = document.getElementById('gear-btn');
+  if (gear) gear.style.display = authState.user_name === 'ashok' ? '' : 'none';
+}
+
 function updateMain() {
   const banner = document.getElementById('banner');
   const sub = document.getElementById('banner-sub');
@@ -563,7 +575,7 @@ function updateMain() {
   if (!state.mixed_at_str) {
     banner.classList.remove('expired');
     banner.style.background = '';
-    sub.textContent = 'NO BOTTLE MIXED YET';
+    sub.innerHTML = 'NO BOTTLE MIXED YET';
     sub.style.color = '';
     time_el.style.display = 'none';
     cdCorner.style.display = 'none';
@@ -610,23 +622,6 @@ function updateMain() {
       pTrack.style.display = 'none';
     }
   }
-}
-
-function updateSamples() {
-  const grid = document.getElementById('samples-grid');
-  if (!state.combos || grid.children.length) return;
-  state.combos.forEach((c, i) => {
-    const card = document.createElement('div');
-    card.className = 'sample-card';
-    card.innerHTML =
-      '<div class="sample-half"><div class="sample-lbl">WATER</div>' +
-      '<div class="sample-val water-val">' + c[0] + '</div>' +
-      '<div class="sample-unit">ml</div></div>' +
-      '<div class="sample-half"><div class="sample-lbl">POWDER</div>' +
-      '<div class="sample-val powder-val">' + c[1].toFixed(1) + '</div>' +
-      '<div class="sample-unit">g</div></div>';
-    grid.appendChild(card);
-  });
 }
 
 let modalMode = '';  // 'edit' or 'leftover'
@@ -1456,6 +1451,13 @@ function entryMl(e) {
   return m ? parseInt(m[1]) : 0;
 }
 
+function entryConsumedMl(e) {
+  const mixed = entryMl(e);
+  if (!mixed) return 0;
+  const lo = e && e.leftover ? parseInt(String(e.leftover).replace(/[^0-9]/g, '')) || 0 : 0;
+  return Math.max(0, mixed - lo);
+}
+
 function updateTrends() {
   if (!state.mix_log) return;
   const now = new Date();
@@ -1647,17 +1649,21 @@ function computeAvgGaps() {
   const sorted = state.mix_log
     .filter(e => parseEntryDate(e) && entryMl(e))
     .sort((a, b) => (parseEntryDate(a) || 0) - (parseEntryDate(b) || 0));
-  const dayGaps = [], nightGaps = [];
+  // Store min/ml rate from the bottle that was consumed (prev entry).
+  // This lets prediction scale with how much was just fed.
+  // Cap at 6h to exclude overnight/skipped-feeding gaps.
+  const dayRates = [], nightRates = [];
   for (let i = 1; i < sorted.length; i++) {
     const prev = parseEntryDate(sorted[i - 1]);
     const curr = parseEntryDate(sorted[i]);
-    if (!prev || !curr) continue;
+    const ml   = entryConsumedMl(sorted[i - 1]); // use consumed (mixed − leftover)
+    if (!prev || !curr || !ml) continue;
     const gapMins = (curr - prev) / 60000;
-    if (gapMins <= 0) continue;
-    (prev.getHours() >= 10 && prev.getHours() < 22 ? dayGaps : nightGaps).push(gapMins);
+    if (gapMins <= 0 || gapMins > 360) continue; // skip outliers
+    (prev.getHours() >= 10 && prev.getHours() < 22 ? dayRates : nightRates).push(gapMins / ml);
   }
-  avgDayGapMins   = dayGaps.length   ? dayGaps.reduce((a, b) => a + b, 0)   / dayGaps.length   : null;
-  avgNightGapMins = nightGaps.length ? nightGaps.reduce((a, b) => a + b, 0) / nightGaps.length : null;
+  avgDayRatePerMl   = dayRates.length   ? dayRates.reduce((a, b) => a + b, 0)   / dayRates.length   : null;
+  avgNightRatePerMl = nightRates.length ? nightRates.reduce((a, b) => a + b, 0) / nightRates.length : null;
 }
 
 function updateNextFeedingBar() {
@@ -1668,11 +1674,14 @@ function updateNextFeedingBar() {
     .filter(e => parseEntryDate(e) && entryMl(e))
     .sort((a, b) => (parseEntryDate(a) || 0) - (parseEntryDate(b) || 0));
   if (!withDates.length) { bar.textContent = ''; bar.style.display = 'none'; return; }
-  const lastDt = parseEntryDate(withDates[withDates.length - 1]);
-  if (!lastDt) { bar.textContent = ''; bar.style.display = 'none'; return; }
+  const lastEntry = withDates[withDates.length - 1];
+  const lastDt = parseEntryDate(lastEntry);
+  const lastMl = entryConsumedMl(lastEntry) || entryMl(lastEntry); // fall back to mixed if no leftover yet
+  if (!lastDt || !lastMl) { bar.textContent = ''; bar.style.display = 'none'; return; }
   const h = lastDt.getHours();
-  const gapMins = (h >= 10 && h < 22) ? avgDayGapMins : avgNightGapMins;
-  if (gapMins === null) { bar.textContent = ''; bar.style.display = 'none'; return; }
+  const rate = (h >= 10 && h < 22) ? avgDayRatePerMl : avgNightRatePerMl;
+  if (rate === null) { bar.textContent = ''; bar.style.display = 'none'; return; }
+  const gapMins = rate * lastMl;
   const nextDt = new Date(lastDt.getTime() + gapMins * 60000);
   const timeStr = nextDt.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit', hour12:true}).toLowerCase();
   bar.textContent = 'estimated next feeding ~ ' + timeStr;
@@ -1693,11 +1702,12 @@ async function pollState() {
     state = await r.json();
     if (state.weight_log) weightData = state.weight_log;
     if (state.diaper_log) { diaperLog = state.diaper_log; }
+    // Cache for instant restore on next load
+    try { localStorage.setItem('fh_cache', JSON.stringify({state, diaperLog, ts: Date.now() / 1000})); } catch(e) {}
     updateDiaperCounts();
     computeAvgGaps();
     updateNextFeedingBar();
     updateMain();
-    updateSamples();
     updateSettings();
   } catch(e) {}
 }
@@ -1741,7 +1751,7 @@ async function checkAuth() {
 
   try {
     const r = await fetch(API_BASE + '/api/auth/status', {credentials: 'include'});
-    authState = await r.json();
+    authState = await r.json(); updateGear();
   } catch(e) {
     overlay.classList.remove('hidden');
     sub.textContent = 'Cannot reach server';
@@ -1882,6 +1892,7 @@ async function doLogin() {
   const vd = await vr.json();
   if (!vr.ok) throw new Error(vd.error || 'Login failed');
 
+  authState = {authenticated: true, registered: true, user_name: vd.user_name || ''}; updateGear();
   document.getElementById('auth-overlay').classList.add('hidden');
   pollState();
   updateCalc();
@@ -1940,6 +1951,8 @@ async function addDeviceFromLogin() {
       body: JSON.stringify(body), credentials: 'include',
     });
     if (vr.ok) {
+      const vd = await vr.json();
+      authState = {authenticated: true, registered: true, user_name: vd.user_name || ''}; updateGear();
       document.getElementById('auth-overlay').classList.add('hidden');
       pollState(); updateCalc();
     } else {
@@ -1952,37 +1965,116 @@ async function addDeviceFromLogin() {
   }
 }
 
-async function addDeviceFromSettings() {
-  const name = document.getElementById('settings-device-name').value.trim();
-  if (!name) { alert('Enter a name first'); return; }
-  try {
-    const r = await fetch(API_BASE + '/api/auth/register-options', {method: 'POST', credentials: 'include'});
-    const options = await r.json();
-    options.challenge = base64urlToBuffer(options.challenge);
-    options.user.id = base64urlToBuffer(options.user.id);
-    if (options.excludeCredentials) {
-      options.excludeCredentials = options.excludeCredentials.map(c => ({...c, id: base64urlToBuffer(c.id)}));
-    }
-    const credential = await navigator.credentials.create({publicKey: options});
-    const body = {
-      id: credential.id,
-      rawId: bufferToBase64url(credential.rawId),
-      type: credential.type,
-      user_name: name,
-      response: {
-        attestationObject: bufferToBase64url(credential.response.attestationObject),
-        clientDataJSON: bufferToBase64url(credential.response.clientDataJSON),
-      },
-    };
-    if (credential.response.getTransports) body.response.transports = credential.response.getTransports();
-    const vr = await fetch(API_BASE + '/api/auth/register-verify', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(body), credentials: 'include',
-    });
-    if (vr.ok) alert('Passkey added for ' + name + '!');
-    else { const d = await vr.json(); alert('Failed: ' + (d.error || 'Unknown error')); }
-  } catch(e) { alert('Failed: ' + e.message); }
+async function loadUsersSection() {
+  const usersTab = document.getElementById('stab-users');
+  if (authState.user_name !== 'ashok') {
+    if (usersTab) usersTab.style.display = 'none';
+    showSettingsTab('timer');
+    return;
+  }
+  if (usersTab) usersTab.style.display = '';
+  const [ar, cr] = await Promise.all([
+    fetch(API_BASE + '/api/auth/allowed-users', {credentials: 'include'}),
+    fetch(API_BASE + '/api/auth/credentials', {credentials: 'include'}),
+  ]);
+  if (!ar.ok || !cr.ok) return;
+  const {allowed_users} = await ar.json();
+  const {credentials} = await cr.json();
+
+  // Group passkeys by user_name
+  const credsByUser = {};
+  credentials.forEach(c => {
+    const u = c.user_name || '(unnamed)';
+    (credsByUser[u] = credsByUser[u] || []).push(c);
+  });
+
+  // All known names: ashok + allowlist + anyone with a passkey
+  const names = ['ashok', ...new Set([...allowed_users, ...Object.keys(credsByUser)].filter(n => n !== 'ashok'))];
+
+  const list = document.getElementById('users-list');
+  list.innerHTML = '';
+  names.forEach(name => {
+    const isAdmin = name === 'ashok';
+    const creds = credsByUser[name] || [];
+    const cardId = 'ucard-' + name;
+
+    const passkeysHtml = creds.length
+      ? creds.map(c => {
+          const created = c.created ? new Date(c.created).toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'}) : '';
+          return `<div style="font-size:.72rem;color:var(--dim);margin-top:4px">🔑 passkey${created ? ' · ' + created : ''}</div>`;
+        }).join('')
+      : `<div style="font-size:.72rem;color:var(--dim2);margin-top:4px">No passkey yet</div>`;
+
+    // Build action buttons (same width via grid)
+    const actionButtons = !isAdmin ? `
+      <div id="${cardId}-actions" style="display:none;margin-top:10px;border-top:1px solid var(--border);padding-top:10px">
+        <div style="display:grid;gap:6px">
+          ${creds.map(c => {
+            const created = c.created ? new Date(c.created).toLocaleDateString('en-US', {month:'short', day:'numeric'}) : '';
+            return `<button onclick="deletePasskey('${c.cred_id}')" style="width:100%;padding:10px;border-radius:var(--radius-sm);font-size:.78rem;font-weight:600;background:var(--card);color:var(--dim);border:1px solid var(--border);text-align:left">Revoke passkey${created ? ' · ' + created : ''}</button>`;
+          }).join('')}
+          <button onclick="removeUser('${name}')" style="width:100%;padding:10px;border-radius:var(--radius-sm);font-size:.78rem;font-weight:600;background:var(--red-bg);color:var(--red);border:1px solid var(--red-border);text-align:left">Remove user</button>
+        </div>
+      </div>` : '';
+
+    const card = document.createElement('div');
+    card.id = cardId;
+    card.style.cssText = 'background:var(--card2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px';
+    card.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <div>
+          <div style="font-size:.9rem;font-weight:700;color:var(--white);text-transform:capitalize">${name}${isAdmin ? ' <span style="font-size:.6rem;color:var(--dim);font-weight:400;text-transform:none">admin</span>' : ''}</div>
+          ${passkeysHtml}
+        </div>
+        ${!isAdmin ? `<button onclick="toggleUserActions('${cardId}')" style="background:none;border:none;color:var(--dim);font-size:1.1rem;padding:4px 8px;cursor:pointer;line-height:1" title="Manage">✏️</button>` : ''}
+      </div>
+      ${actionButtons}
+    `;
+    list.appendChild(card);
+  });
 }
+
+function toggleUserActions(cardId) {
+  const panel = document.getElementById(cardId + '-actions');
+  if (!panel) return;
+  panel.style.display = panel.style.display === 'none' ? '' : 'none';
+}
+
+async function addAllowedUser() {
+  const input = document.getElementById('settings-new-user');
+  const name = input.value.trim().toLowerCase();
+  if (!name) return;
+  const r = await fetch(API_BASE + '/api/auth/allowed-users', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name}), credentials: 'include',
+  });
+  if (r.ok) { input.value = ''; loadUsersSection(); }
+  else { const d = await r.json(); alert(d.error || 'Failed'); }
+}
+
+async function removeUser(name) {
+  if (!confirm(`Remove ${name} and revoke all their passkeys?`)) return;
+  // Remove from allowlist + delete all their passkeys
+  const [ar, cr] = await Promise.all([
+    fetch(API_BASE + '/api/auth/allowed-users', {credentials: 'include'}),
+    fetch(API_BASE + '/api/auth/credentials', {credentials: 'include'}),
+  ]);
+  const {credentials} = await cr.json();
+  const userCreds = credentials.filter(c => c.user_name === name);
+  await Promise.all([
+    fetch(API_BASE + '/api/auth/allowed-users/' + encodeURIComponent(name), {method: 'DELETE', credentials: 'include'}),
+    ...userCreds.map(c => fetch(API_BASE + '/api/auth/credentials/' + encodeURIComponent(c.cred_id), {method: 'DELETE', credentials: 'include'})),
+  ]);
+  loadUsersSection();
+}
+
+async function deletePasskey(credId) {
+  if (!confirm('Revoke this passkey?')) return;
+  const r = await fetch(API_BASE + '/api/auth/credentials/' + encodeURIComponent(credId), {method: 'DELETE', credentials: 'include'});
+  if (r.ok) loadUsersSection();
+  else alert('Failed to revoke passkey');
+}
+
 
 // Add credentials:include to all fetch calls for cookie handling
 const _origFetch = window.fetch;
@@ -2115,8 +2207,27 @@ async function checkPiAuth() {
   return false;
 }
 
+// Restore cached state for instant banner render before API responds
+function restoreCachedState() {
+  try {
+    const raw = localStorage.getItem('fh_cache');
+    if (!raw) return;
+    const {state: s, diaperLog: dl, ts} = JSON.parse(raw);
+    state = s;
+    if (dl) diaperLog = dl;
+    // Adjust remaining_secs for time elapsed since cache was written
+    if (state.remaining_secs > 0) {
+      state.remaining_secs = Math.max(0, state.remaining_secs - (Date.now() / 1000 - ts));
+      if (state.remaining_secs <= 0) state.expired = true;
+    }
+    updateDiaperCounts();
+    updateMain();
+  } catch(e) {}
+}
+
 // Initial load — Pi kiosk bypasses passkey auth
 (async () => {
+  restoreCachedState();
   if (isPiKiosk) {
     const ok = await checkPiAuth();
     if (ok) {

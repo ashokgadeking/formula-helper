@@ -26,6 +26,9 @@ Thumbs.db
 .aws-sam/
 samconfig.toml
 
+# Python venv
+.venv/
+
 # Build artifacts
 lambda_backup.zip
 state_cache.json

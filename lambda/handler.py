@@ -31,6 +31,7 @@ from webauthn.helpers.structs import (
     ResidentKeyRequirement,
     UserVerificationRequirement,
     AuthenticatorAttachment,
+    PublicKeyCredentialDescriptor,
 )
 from webauthn.helpers import bytes_to_base64url, base64url_to_bytes
 
@@ -49,10 +50,9 @@ DEFAULT_COUNTDOWN_SECS = 65 * 60  # 65 minutes
 
 POWDER_PER_60ML = 8.3
 COMBOS = [
-    (60,  POWDER_PER_60ML),
-    (80,  POWDER_PER_60ML * 80  / 60.0),
     (90,  POWDER_PER_60ML * 90  / 60.0),
     (100, POWDER_PER_60ML * 100 / 60.0),
+    (120, POWDER_PER_60ML * 120 / 60.0),
 ]
 
 dynamodb = boto3.resource("dynamodb")
@@ -473,7 +473,9 @@ def auth_register_options(event):
 def auth_register_verify(event):
     """Verify registration response and store credential."""
     data = _parse_body(event)
-    user_name = data.pop("user_name", "")
+    user_name = data.pop("user_name", "").strip().lower()
+    if not _is_allowed_to_register(user_name):
+        return _json_response({"error": f"'{user_name}' is not on the allowed users list"}, 403)
 
     # Get stored challenge
     resp = table.get_item(Key={"PK": "AUTH", "SK": "CHALLENGE#registration"})
@@ -521,12 +523,10 @@ def auth_register_verify(event):
 def auth_login_options(event):
     """Generate authentication options for existing passkey."""
     creds = _get_credentials()
-    allow_credentials = []
-    for c in creds:
-        allow_credentials.append({
-            "id": base64url_to_bytes(c["credential_id"]),
-            "type": "public-key",
-        })
+    allow_credentials = [
+        PublicKeyCredentialDescriptor(id=base64url_to_bytes(c["credential_id"]))
+        for c in creds
+    ]
 
     options = webauthn.generate_authentication_options(
         rp_id=RP_ID,
@@ -595,6 +595,93 @@ def auth_login_verify(event):
         "cookies": [_session_cookie(token, SESSION_TTL_SECS)],
         "body": json.dumps({"ok": True, "user_name": user_name}),
     }
+
+
+ADMIN_USER = "ashok"  # always allowed to register; has access to management endpoints
+
+# ── Allowed-user allowlist ────────────────────────────────────────────────────
+
+def _get_allowed_users():
+    resp = table.query(
+        KeyConditionExpression=Key("PK").eq("AUTH") & Key("SK").begins_with("ALLOWED#")
+    )
+    return [item["name"] for item in resp.get("Items", [])]
+
+
+def _is_allowed_to_register(user_name):
+    if user_name == ADMIN_USER:
+        return True
+    resp = table.get_item(Key={"PK": "AUTH", "SK": f"ALLOWED#{user_name}"})
+    return "Item" in resp
+
+
+def allowed_users_list(event):
+    token = _get_session_from_event(event)
+    session = _validate_session(token)
+    if not session or session.get("user_name") != ADMIN_USER:
+        return _json_response({"error": "Forbidden"}, 403)
+    return _json_response({"allowed_users": _get_allowed_users()})
+
+
+def allowed_users_add(event):
+    token = _get_session_from_event(event)
+    session = _validate_session(token)
+    if not session or session.get("user_name") != ADMIN_USER:
+        return _json_response({"error": "Forbidden"}, 403)
+    data = _parse_body(event)
+    name = (data.get("name") or "").strip().lower()
+    if not name:
+        return _json_response({"error": "Name required"}, 400)
+    table.put_item(Item={
+        "PK": "AUTH", "SK": f"ALLOWED#{name}",
+        "name": name, "created": _now_ct().isoformat(),
+    })
+    return _json_response({"ok": True})
+
+
+def allowed_users_remove(event):
+    token = _get_session_from_event(event)
+    session = _validate_session(token)
+    if not session or session.get("user_name") != ADMIN_USER:
+        return _json_response({"error": "Forbidden"}, 403)
+    name = event.get("pathParameters", {}).get("name", "")
+    if name == ADMIN_USER:
+        return _json_response({"error": "Cannot remove admin"}, 400)
+    table.delete_item(Key={"PK": "AUTH", "SK": f"ALLOWED#{name}"})
+    return _json_response({"ok": True})
+
+
+# ── Credential management (ashok only) ───────────────────────────────────────
+
+def auth_list_credentials(event):
+    """List all registered passkeys. Ashok-only."""
+    token = _get_session_from_event(event)
+    session = _validate_session(token)
+    if not session or session.get("user_name") != "ashok":
+        return _json_response({"error": "Forbidden"}, 403)
+    creds = _get_credentials()
+    result = [
+        {
+            "cred_id": c["credential_id"],
+            "user_name": c.get("user_name", ""),
+            "created": c.get("created", ""),
+        }
+        for c in creds
+    ]
+    return _json_response({"credentials": result})
+
+
+def auth_delete_credential(event):
+    """Delete a passkey by credential ID. Ashok-only."""
+    token = _get_session_from_event(event)
+    session = _validate_session(token)
+    if not session or session.get("user_name") != "ashok":
+        return _json_response({"error": "Forbidden"}, 403)
+    cred_id = event.get("pathParameters", {}).get("cred_id", "")
+    if not cred_id:
+        return _json_response({"error": "Missing cred_id"}, 400)
+    table.delete_item(Key={"PK": "AUTH", "SK": f"CRED#{cred_id}"})
+    return _json_response({"ok": True})
 
 
 # ── Push subscription handlers ───────────────────────────────────────────────
@@ -906,16 +993,18 @@ AUTH_ROUTES = {
     "GET /api/auth/status": auth_status,
     "POST /api/auth/login-options": auth_login_options,
     "POST /api/auth/login-verify": auth_login_verify,
-}
-
-# Registration is session-protected UNLESS no credentials exist yet (first-time setup)
-REGISTER_ROUTES = {
+    # Options are open — anyone can get a challenge; allowlist check is in register-verify
     "POST /api/auth/register-options": auth_register_options,
     "POST /api/auth/register-verify": auth_register_verify,
 }
 
 # Protected routes (session required)
 PROTECTED_ROUTES = {
+    "GET /api/auth/credentials": auth_list_credentials,
+    "DELETE /api/auth/credentials/{cred_id}": auth_delete_credential,
+    "GET /api/auth/allowed-users": allowed_users_list,
+    "POST /api/auth/allowed-users": allowed_users_add,
+    "DELETE /api/auth/allowed-users/{name}": allowed_users_remove,
     "GET /api/state": get_state,
     "POST /api/start": post_start,
     "POST /api/log": post_log,
@@ -936,17 +1025,6 @@ def lambda_handler(event, context):
     if route_key in AUTH_ROUTES:
         try:
             return AUTH_ROUTES[route_key](event)
-        except Exception as e:
-            return _json_response({"error": str(e)}, 500)
-
-    # Registration — open only for first-time setup; requires session after that
-    if route_key in REGISTER_ROUTES:
-        try:
-            if _has_any_credentials():
-                token = _get_session_from_event(event)
-                if not _validate_session(token):
-                    return _json_response({"error": "Unauthorized"}, 401)
-            return REGISTER_ROUTES[route_key](event)
         except Exception as e:
             return _json_response({"error": str(e)}, 500)
 

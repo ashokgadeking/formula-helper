@@ -1,0 +1,19 @@
+# API keys
+*.p8
+*.p12
+*.cer
+*.mobileprovision
+
+# Xcode build artifacts
+build/
+DerivedData/
+*.xcarchive
+*.ipa
+
+# Xcode user data
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcworkspace/contents.xcworkspacedata
+
+# OS
+.DS_Store
