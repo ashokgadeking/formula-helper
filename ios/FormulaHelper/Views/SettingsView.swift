@@ -1,332 +1,649 @@
 import SwiftUI
 
+// MARK: - Settings (native insetGrouped list)
+
 struct SettingsView: View {
     @ObservedObject var vm: StateViewModel
-    @Environment(\.dismiss) private var dismiss
-    @State private var tab: Tab = .users
+    @EnvironmentObject var auth: AuthManager
+    @StateObject private var users = UserStore()
+    @State private var showInvite = false
+    @State private var showResetConfirm = false
 
-    enum Tab { case users, timer }
+    private var isAdmin: Bool { auth.authState.userName == "ashok" }
 
     var body: some View {
         NavigationStack {
             ZStack {
-                Color.bg.ignoresSafeArea()
-                VStack(spacing: 0) {
-                    // Tab bar
-                    HStack(spacing: 1) {
-                        tabBtn("Users", t: .users)
-                        tabBtn("Timer", t: .timer)
-                    }
-                    .background(Color.border)
+                Color.primaryBackground.ignoresSafeArea()
 
-                    Divider().background(Color.border)
-
-                    ScrollView {
-                        Group {
-                            if tab == .users { UsersTab() }
-                            else { TimerTab(vm: vm, dismiss: dismiss) }
-                        }
-                        .padding(20)
-                        .padding(.bottom, 40)
-                    }
+                List {
+                    timerSection
+                    if isAdmin { usersSection }
+                    aboutSection
                 }
+                .listStyle(.insetGrouped)
+                .scrollContentBackground(.hidden)
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                        .font(.outfit(14, weight: .medium))
-                        .foregroundColor(Color.dim)
-                }
+            .toolbarBackground(Color.primaryBackground, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+        }
+        .task { if isAdmin { await users.load() } }
+        .sheet(isPresented: $showInvite) {
+            InviteUserSheet(isPresented: $showInvite) { name in
+                try await users.invite(name: name)
             }
         }
     }
 
-    private func tabBtn(_ label: String, t: Tab) -> some View {
-        Button { withAnimation(.spring(duration: 0.2)) { tab = t } } label: {
-            Text(label)
-                .font(.outfit(13, weight: .semibold))
-                .tracking(0.5)
-                .foregroundColor(tab == t ? Color.blue : Color.dim)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
-                .background(tab == t ? Color.blueBg : Color.bg2)
-        }
-    }
-}
+    // MARK: Timer section
 
-// MARK: - Section header
+    @ViewBuilder
+    private var timerSection: some View {
+        Section {
+            NavigationLink {
+                TimerDetailView(vm: vm)
+            } label: {
+                SettingsRow(
+                    icon: "timer",
+                    tint: .green,
+                    title: "Countdown",
+                    trailing: "\(timerMinutes) min"
+                )
+            }
+            .listRowBackground(Color.elevatedBackground)
 
-private func sectionHeader(_ s: String) -> some View {
-    Text(s.uppercased())
-        .font(.outfit(10, weight: .semibold))
-        .tracking(2.5)
-        .foregroundColor(Color.dim)
-}
-
-// MARK: - Users tab
-
-struct UsersTab: View {
-    @State private var inviteName   = ""
-    @State private var inviteError: String?
-    @State private var inviteOk     = false
-    @State private var allowedUsers: [String] = []
-    @State private var credentials: [APIClient.Credential] = []
-    @State private var loading = true
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            // Invite
-            sectionHeader("Invite User")
-
-            VStack(spacing: 10) {
-                HStack(spacing: 8) {
-                    TextField("Name (e.g. anu)", text: $inviteName)
-                        .textContentType(.username)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                        .font(.outfit(14))
-                        .foregroundColor(Color.wht)
-                        .padding(12)
-                        .background(Color.bg2)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.borderLight, lineWidth: 1))
-
-                    Button("Add") { Task { await invite() } }
-                        .font(.outfit(14, weight: .semibold))
-                        .foregroundColor(Color.green)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 12)
-                        .background(Color.greenBg)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.greenBd, lineWidth: 1))
-                        .disabled(inviteName.trimmingCharacters(in: .whitespaces).isEmpty)
+            if hasActiveBottle {
+                Button {
+                    showResetConfirm = true
+                } label: {
+                    SettingsRow(
+                        icon: "arrow.counterclockwise",
+                        tint: .red,
+                        title: "Reset active timer",
+                        titleColor: .red
+                    )
                 }
-
-                if let err = inviteError {
-                    Text(err).font(.outfit(12)).foregroundColor(Color.red.opacity(0.8))
-                }
-                if inviteOk {
-                    Text("Added — they can now register a passkey")
-                        .font(.outfit(12)).foregroundColor(Color.green.opacity(0.8))
+                .listRowBackground(Color.elevatedBackground)
+                .confirmationDialog(
+                    "Reset active timer?",
+                    isPresented: $showResetConfirm,
+                    titleVisibility: .visible
+                ) {
+                    Button("Reset", role: .destructive) {
+                        Task { await vm.resetTimer() }
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("Clears the countdown without logging a new bottle.")
                 }
             }
+        } header: {
+            Text("Bottle Timer").foregroundColor(Color.secondaryLabel)
+        }
+    }
 
-            Divider().background(Color.border)
-            sectionHeader("Users")
+    private var timerMinutes: Int {
+        (vm.state?.settings.countdown_secs ?? 3900) / 60
+    }
 
-            if loading {
-                HStack { Spacer(); ProgressView().tint(Color.dim); Spacer() }
+    private var hasActiveBottle: Bool {
+        guard let end = vm.state?.countdown_end else { return false }
+        return end > Date().timeIntervalSince1970
+    }
+
+    // MARK: Users section
+
+    @ViewBuilder
+    private var usersSection: some View {
+        Section {
+            if users.loading {
+                HStack {
+                    Spacer()
+                    ProgressView().tint(Color.secondaryLabel)
+                    Spacer()
+                }
+                .padding(.vertical, 6)
+                .listRowBackground(Color.elevatedBackground)
             } else {
-                let grouped = Dictionary(grouping: credentials, by: \.user_name)
-                let allNames = Set(allowedUsers + grouped.keys + ["ashok"])
-
-                VStack(spacing: 8) {
-                    ForEach(Array(allNames).sorted(), id: \.self) { name in
-                        UserCard(
-                            name: name,
-                            creds: grouped[name] ?? [],
-                            isAdmin: name == "ashok",
-                            onRevoke: { id in Task { await revoke(id) } },
-                            onRemove: { Task { await remove(name) } }
-                        )
+                ForEach(users.users) { user in
+                    NavigationLink {
+                        UserDetailView(user: user, store: users)
+                    } label: {
+                        UserRow(user: user)
+                    }
+                    .listRowBackground(Color.elevatedBackground)
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        if !user.isAdmin {
+                            Button(role: .destructive) {
+                                Task { await users.remove(name: user.name) }
+                            } label: {
+                                Label("Remove", systemImage: "trash")
+                            }
+                        }
                     }
                 }
+
+                Button { showInvite = true } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.system(size: 22))
+                            .foregroundColor(Color.green)
+                        Text("Invite User")
+                            .appFont(.body)
+                            .foregroundColor(Color.primaryLabel)
+                        Spacer()
+                    }
+                    .contentShape(Rectangle())
+                }
+                .listRowBackground(Color.elevatedBackground)
             }
+        } header: {
+            Text("Users").foregroundColor(Color.secondaryLabel)
         }
-        .task { await loadData() }
     }
 
-    private func loadData() async {
+    // MARK: About section
+
+    @ViewBuilder
+    private var aboutSection: some View {
+        Section {
+            HStack {
+                SettingsRow(icon: "info.circle.fill", tint: .blue, title: "Version")
+                Spacer()
+                Text(appVersion)
+                    .appFont(.body)
+                    .foregroundColor(Color.secondaryLabel)
+            }
+            .listRowBackground(Color.elevatedBackground)
+
+            if let name = auth.authState.userName {
+                SettingsRow(
+                    icon: "person.crop.circle.fill",
+                    tint: .purple,
+                    title: "Signed in as",
+                    trailing: name.capitalized
+                )
+                .listRowBackground(Color.elevatedBackground)
+            }
+        } header: {
+            Text("About").foregroundColor(Color.secondaryLabel)
+        }
+    }
+
+    private var appVersion: String {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let v = info["CFBundleShortVersionString"] as? String ?? "1.0"
+        let b = info["CFBundleVersion"] as? String ?? "1"
+        return "\(v) (\(b))"
+    }
+}
+
+// MARK: - User store
+
+@MainActor
+final class UserStore: ObservableObject {
+    struct User: Identifiable {
+        let name: String
+        let credentials: [APIClient.Credential]
+        let isAdmin: Bool
+        var id: String { name }
+        var isPending: Bool { credentials.isEmpty && !isAdmin }
+    }
+
+    @Published var users: [User] = []
+    @Published var loading = true
+
+    func load() async {
         loading = true
         async let u = try? APIClient.shared.listAllowedUsers()
         async let c = try? APIClient.shared.listCredentials()
-        allowedUsers = await u ?? []
-        credentials  = await c ?? []
+        let allowed = await u ?? []
+        let creds = await c ?? []
+        let grouped = Dictionary(grouping: creds, by: \.user_name)
+        let names = Set(allowed + grouped.keys + ["ashok"])
+        users = names.sorted().map { name in
+            User(name: name, credentials: grouped[name] ?? [], isAdmin: name == "ashok")
+        }
         loading = false
     }
 
-    private func invite() async {
-        inviteError = nil; inviteOk = false
-        let name = inviteName.trimmingCharacters(in: .whitespaces).lowercased()
-        do { try await APIClient.shared.addAllowedUser(name: name); inviteName = ""; inviteOk = true; await loadData() }
-        catch { inviteError = error.localizedDescription }
+    func invite(name: String) async throws {
+        let n = name.trimmingCharacters(in: .whitespaces).lowercased()
+        try await APIClient.shared.addAllowedUser(name: n)
+        await load()
     }
 
-    private func revoke(_ credId: String) async {
-        try? await APIClient.shared.deleteCredential(credId: credId); await loadData()
+    func remove(name: String) async {
+        try? await APIClient.shared.removeAllowedUser(name: name)
+        await load()
     }
 
-    private func remove(_ name: String) async {
-        try? await APIClient.shared.removeAllowedUser(name: name); await loadData()
+    func revoke(credId: String) async {
+        try? await APIClient.shared.deleteCredential(credId: credId)
+        await load()
     }
 }
 
-// MARK: - User card
+// MARK: - Reusable row (iOS Settings style)
 
-struct UserCard: View {
-    let name: String
-    let creds: [APIClient.Credential]
-    let isAdmin: Bool
-    let onRevoke: (String) -> Void
-    let onRemove: () -> Void
-    @State private var expanded = false
+struct SettingsRow: View {
+    let icon: String
+    let tint: Color
+    let title: String
+    var titleColor: Color = Color.primaryLabel
+    var trailing: String? = nil
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Text(name.capitalized)
-                            .font(.outfit(15, weight: .bold))
-                            .foregroundColor(Color.wht)
-                        if isAdmin {
-                            Text("ADMIN")
-                                .font(.outfit(9, weight: .semibold))
-                                .tracking(1.5)
-                                .foregroundColor(Color.dim)
-                                .padding(.horizontal, 6).padding(.vertical, 2)
-                                .background(Color.card2)
-                                .clipShape(RoundedRectangle(cornerRadius: 4))
-                                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.border, lineWidth: 1))
-                        }
-                    }
-                    Text(creds.isEmpty ? "No passkeys" : "\(creds.count) passkey\(creds.count == 1 ? "" : "s")")
-                        .font(.outfit(12))
-                        .foregroundColor(Color.dim)
-                }
-                Spacer()
-                if !isAdmin {
-                    Button {
-                        withAnimation(.spring(duration: 0.2)) { expanded.toggle() }
-                    } label: {
-                        Image(systemName: expanded ? "chevron.up" : "pencil")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(Color.blue)
-                            .frame(width: 32, height: 32)
-                            .background(Color.blueBg)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.blueBd, lineWidth: 1))
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                }
+        HStack(spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(tint.opacity(0.18))
+                Image(systemName: icon)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(tint)
             }
-            .padding(14)
+            .frame(width: 30, height: 30)
 
-            if expanded {
-                Divider().background(Color.border)
-                VStack(spacing: 8) {
-                    ForEach(creds) { cred in
-                        actionBtn("Revoke passkey (\(shortDate(cred.created)))", fg: Color.red, bg: Color.redBg, bd: Color.redBd) {
-                            onRevoke(cred.cred_id)
-                        }
-                    }
-                    actionBtn("Remove user", fg: Color.red, bg: Color.redBg, bd: Color.redBd) {
-                        onRemove()
-                    }
-                }
-                .padding(14)
+            Text(title)
+                .appFont(.body)
+                .foregroundColor(titleColor)
+
+            Spacer()
+
+            if let trailing {
+                Text(trailing)
+                    .appFont(.body)
+                    .foregroundColor(Color.secondaryLabel)
             }
         }
-        .background(Color.card)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.border, lineWidth: 1))
-        .animation(.spring(duration: 0.2), value: expanded)
+    }
+}
+
+// MARK: - User row
+
+struct UserRow: View {
+    let user: UserStore.User
+
+    var body: some View {
+        HStack(spacing: 12) {
+            avatar
+            VStack(alignment: .leading, spacing: 2) {
+                Text(user.name.capitalized)
+                    .appFont(.body)
+                    .foregroundColor(Color.primaryLabel)
+                Text(subtitle)
+                    .appFont(.footnote)
+                    .foregroundColor(Color.secondaryLabel)
+            }
+            Spacer()
+            trailing
+        }
+        .padding(.vertical, 4)
     }
 
-    private func actionBtn(_ label: String, fg: Color, bg: Color, bd: Color, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(label)
-                .font(.outfit(13, weight: .semibold))
-                .foregroundColor(fg)
-                .frame(maxWidth: .infinity, minHeight: 40)
-                .background(bg)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(bd, lineWidth: 1))
+    private var avatarTint: Color {
+        user.isAdmin ? Color.green : (user.isPending ? Color.yellow : Color.blue)
+    }
+
+    private var avatar: some View {
+        ZStack {
+            Circle().fill(avatarTint.opacity(0.18))
+            Text(String(user.name.prefix(1)).uppercased())
+                .appFont(.headline)
+                .foregroundColor(avatarTint)
         }
-        .buttonStyle(PlainButtonStyle())
+        .frame(width: 36, height: 36)
+    }
+
+    private var subtitle: String {
+        if user.isPending { return "Waiting for passkey" }
+        let n = user.credentials.count
+        return n == 1 ? "1 passkey" : "\(n) passkeys"
+    }
+
+    @ViewBuilder
+    private var trailing: some View {
+        if user.isAdmin {
+            PillBadge(text: "ADMIN", color: Color.green)
+        } else if user.isPending {
+            PillBadge(text: "PENDING", color: Color.yellow)
+        }
+    }
+}
+
+struct PillBadge: View {
+    let text: String
+    let color: Color
+
+    var body: some View {
+        Text(text)
+            .appFont(.caption2)
+            .tracking(1.2)
+            .foregroundColor(color)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(color.opacity(0.12))
+            .clipShape(Capsule())
+            .overlay(Capsule().stroke(color.opacity(0.30), lineWidth: 1))
+    }
+}
+
+// MARK: - Timer detail
+
+struct TimerDetailView: View {
+    @ObservedObject var vm: StateViewModel
+    @State private var mins: Double
+    @State private var saving = false
+
+    init(vm: StateViewModel) {
+        self.vm = vm
+        _mins = State(initialValue: Double((vm.state?.settings.countdown_secs ?? 3900) / 60))
+    }
+
+    var body: some View {
+        ZStack {
+            Color.primaryBackground.ignoresSafeArea()
+
+            List {
+                Section {
+                    VStack(alignment: .leading, spacing: 16) {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text("\(Int(mins))")
+                                .font(.custom("Outfit", size: 48, relativeTo: .largeTitle).bold())
+                                .foregroundColor(Color.green)
+                                .monospacedDigit()
+                            Text("min")
+                                .appFont(.title3)
+                                .foregroundColor(Color.secondaryLabel)
+                            Spacer()
+                            if saving {
+                                ProgressView().tint(Color.secondaryLabel).scaleEffect(0.8)
+                            }
+                        }
+                        Slider(value: $mins, in: 30...180, step: 5) { editing in
+                            if !editing { Task { await save() } }
+                        }
+                        .tint(Color.green)
+                        HStack {
+                            Text("30 min")
+                            Spacer()
+                            Text("180 min")
+                        }
+                        .appFont(.caption1)
+                        .foregroundColor(Color.tertiaryLabel)
+                    }
+                    .padding(.vertical, 6)
+                    .listRowBackground(Color.elevatedBackground)
+                } header: {
+                    Text("Duration").foregroundColor(Color.secondaryLabel)
+                } footer: {
+                    Text("How long before a mixed bottle should be discarded. Changes save automatically.")
+                        .appFont(.footnote)
+                        .foregroundColor(Color.secondaryLabel)
+                }
+            }
+            .listStyle(.insetGrouped)
+            .scrollContentBackground(.hidden)
+        }
+        .navigationTitle("Countdown")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func save() async {
+        saving = true
+        try? await APIClient.shared.saveSettings(countdownSecs: Int(mins) * 60)
+        await vm.refresh()
+        saving = false
+    }
+}
+
+// MARK: - User detail
+
+struct UserDetailView: View {
+    let user: UserStore.User
+    @ObservedObject var store: UserStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var confirmRemove = false
+    @State private var confirmRevoke: APIClient.Credential?
+
+    var body: some View {
+        ZStack {
+            Color.primaryBackground.ignoresSafeArea()
+
+            List {
+                Section {
+                    HStack(spacing: 16) {
+                        ZStack {
+                            Circle().fill(avatarTint.opacity(0.18))
+                            Text(String(user.name.prefix(1)).uppercased())
+                                .font(.custom("Outfit", size: 28, relativeTo: .title).bold())
+                                .foregroundColor(avatarTint)
+                        }
+                        .frame(width: 56, height: 56)
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(user.name.capitalized)
+                                .appFont(.title2)
+                                .foregroundColor(Color.primaryLabel)
+                            if user.isAdmin {
+                                PillBadge(text: "ADMIN", color: Color.green)
+                            } else if user.isPending {
+                                PillBadge(text: "PENDING", color: Color.yellow)
+                            }
+                        }
+                        Spacer()
+                    }
+                    .padding(.vertical, 8)
+                    .listRowBackground(Color.elevatedBackground)
+                }
+
+                Section {
+                    if user.credentials.isEmpty {
+                        Text(user.isPending
+                             ? "No passkey registered yet. Share sign-in instructions with this user."
+                             : "No passkeys on file.")
+                            .appFont(.footnote)
+                            .foregroundColor(Color.secondaryLabel)
+                            .listRowBackground(Color.elevatedBackground)
+                    } else {
+                        ForEach(user.credentials) { cred in
+                            passkeyRow(cred)
+                                .listRowBackground(Color.elevatedBackground)
+                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                    Button(role: .destructive) {
+                                        confirmRevoke = cred
+                                    } label: {
+                                        Label("Revoke", systemImage: "trash")
+                                    }
+                                }
+                        }
+                    }
+                } header: {
+                    Text("Passkeys").foregroundColor(Color.secondaryLabel)
+                } footer: {
+                    if !user.credentials.isEmpty {
+                        Text("Swipe left on a passkey to revoke it.")
+                            .appFont(.footnote)
+                            .foregroundColor(Color.secondaryLabel)
+                    }
+                }
+
+                if !user.isAdmin {
+                    Section {
+                        Button(role: .destructive) {
+                            confirmRemove = true
+                        } label: {
+                            HStack {
+                                Spacer()
+                                Text("Remove User")
+                                    .appFont(.body)
+                                    .foregroundColor(Color.red)
+                                Spacer()
+                            }
+                        }
+                        .listRowBackground(Color.elevatedBackground)
+                    } footer: {
+                        Text("Revokes all passkeys and removes this user from the allowlist.")
+                            .appFont(.footnote)
+                            .foregroundColor(Color.secondaryLabel)
+                    }
+                }
+            }
+            .listStyle(.insetGrouped)
+            .scrollContentBackground(.hidden)
+        }
+        .navigationTitle(user.name.capitalized)
+        .navigationBarTitleDisplayMode(.inline)
+        .confirmationDialog(
+            "Remove \(user.name.capitalized)?",
+            isPresented: $confirmRemove,
+            titleVisibility: .visible
+        ) {
+            Button("Remove", role: .destructive) {
+                Task {
+                    await store.remove(name: user.name)
+                    dismiss()
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This revokes all passkeys and removes them from the allowlist.")
+        }
+        .confirmationDialog(
+            "Revoke this passkey?",
+            isPresented: Binding(
+                get: { confirmRevoke != nil },
+                set: { if !$0 { confirmRevoke = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Revoke", role: .destructive) {
+                if let c = confirmRevoke {
+                    Task { await store.revoke(credId: c.cred_id) }
+                }
+                confirmRevoke = nil
+            }
+            Button("Cancel", role: .cancel) { confirmRevoke = nil }
+        } message: {
+            Text("This passkey will no longer be able to sign in.")
+        }
+    }
+
+    private var avatarTint: Color {
+        user.isAdmin ? Color.green : (user.isPending ? Color.yellow : Color.blue)
+    }
+
+    private func passkeyRow(_ cred: APIClient.Credential) -> some View {
+        HStack(spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Color.blue.opacity(0.18))
+                Image(systemName: "key.horizontal.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(Color.blue)
+            }
+            .frame(width: 30, height: 30)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Passkey")
+                    .appFont(.body)
+                    .foregroundColor(Color.primaryLabel)
+                Text("Added \(shortDate(cred.created))")
+                    .appFont(.footnote)
+                    .foregroundColor(Color.secondaryLabel)
+            }
+            Spacer()
+        }
     }
 
     private func shortDate(_ iso: String) -> String {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         guard let d = f.date(from: iso) else { return "—" }
-        let r = DateFormatter(); r.dateStyle = .short; r.timeStyle = .none
+        let r = DateFormatter(); r.dateStyle = .medium; r.timeStyle = .none
         return r.string(from: d)
     }
 }
 
-// MARK: - Timer tab
+// MARK: - Invite user sheet
 
-struct TimerTab: View {
-    @ObservedObject var vm: StateViewModel
-    let dismiss: DismissAction
-    @State private var countdownMins: Double
-    @State private var saving    = false
-    @State private var resetting = false
+struct InviteUserSheet: View {
+    @Binding var isPresented: Bool
+    let onSubmit: (String) async throws -> Void
 
-    init(vm: StateViewModel, dismiss: DismissAction) {
-        self.vm = vm; self.dismiss = dismiss
-        _countdownMins = State(initialValue: Double((vm.state?.settings.countdown_secs ?? 3900) / 60))
+    @State private var name = ""
+    @State private var error: String?
+    @State private var submitting = false
+    @FocusState private var focused: Bool
+
+    private var trimmed: String {
+        name.trimmingCharacters(in: .whitespaces).lowercased()
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            sectionHeader("Bottle Countdown")
+        NavigationStack {
+            ZStack {
+                Color.primaryBackground.ignoresSafeArea()
 
-            VStack(spacing: 12) {
-                HStack {
-                    Text("\(Int(countdownMins)) minutes")
-                        .font(.outfit(22, weight: .bold))
-                        .foregroundColor(Color.wht)
-                    Spacer()
-                }
-                Slider(value: $countdownMins, in: 30...180, step: 5)
-                    .tint(Color.green)
+                List {
+                    Section {
+                        TextField("e.g. anu", text: $name)
+                            .textContentType(.username)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                            .appFont(.body)
+                            .foregroundColor(Color.primaryLabel)
+                            .focused($focused)
+                            .submitLabel(.send)
+                            .onSubmit { Task { await submit() } }
+                            .listRowBackground(Color.elevatedBackground)
+                    } header: {
+                        Text("Name").foregroundColor(Color.secondaryLabel)
+                    } footer: {
+                        Text("Lowercase letters only. They'll create a passkey on their first sign-in.")
+                            .appFont(.footnote)
+                            .foregroundColor(Color.secondaryLabel)
+                    }
 
-                Button(saving ? "Saving…" : "Save Duration") {
-                    guard !saving else { return }
-                    saving = true
-                    Task {
-                        try? await APIClient.shared.saveSettings(countdownSecs: Int(countdownMins) * 60)
-                        await vm.refresh(); saving = false
+                    if let error {
+                        Section {
+                            Text(error)
+                                .appFont(.footnote)
+                                .foregroundColor(Color.red)
+                                .listRowBackground(Color.elevatedBackground)
+                        }
                     }
                 }
-                .font(.outfit(14, weight: .semibold))
-                .foregroundColor(Color.blue)
-                .frame(maxWidth: .infinity, minHeight: 48)
-                .background(Color.blueBg)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.blueBd, lineWidth: 1))
-                .disabled(saving)
+                .listStyle(.insetGrouped)
+                .scrollContentBackground(.hidden)
             }
-            .padding(16)
-            .background(Color.card)
-            .clipShape(RoundedRectangle(cornerRadius: 14))
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.border, lineWidth: 1))
-
-            Divider().background(Color.border)
-            sectionHeader("Reset Timer")
-
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Clears the active countdown without logging a new bottle.")
-                    .font(.outfit(13))
-                    .foregroundColor(Color.dim)
-
-                Button(resetting ? "Resetting…" : "Reset Timer") {
-                    guard !resetting else { return }
-                    resetting = true
-                    Task { await vm.resetTimer(); resetting = false; dismiss() }
+            .navigationTitle("Invite User")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { isPresented = false }
+                        .foregroundColor(Color.secondaryLabel)
                 }
-                .font(.outfit(14, weight: .semibold))
-                .foregroundColor(Color.red)
-                .frame(maxWidth: .infinity, minHeight: 48)
-                .background(Color.redBg)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.redBd, lineWidth: 1))
-                .disabled(resetting)
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Invite") { Task { await submit() } }
+                        .disabled(submitting || trimmed.isEmpty)
+                }
             }
+            .onAppear { focused = true }
+        }
+    }
+
+    private func submit() async {
+        guard !trimmed.isEmpty, !submitting else { return }
+        error = nil; submitting = true
+        defer { submitting = false }
+        do {
+            try await onSubmit(trimmed)
+            isPresented = false
+        } catch {
+            self.error = error.localizedDescription
         }
     }
 }

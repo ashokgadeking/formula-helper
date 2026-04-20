@@ -13,6 +13,8 @@ DerivedData/
 # Xcode user data
 *.xcodeproj/xcuserdata/
 *.xcworkspace/xcuserdata/
+xcuserdata/
+*.xcuserstate
 *.xcworkspace/contents.xcworkspacedata
 
 # OS

@@ -9,9 +9,9 @@ struct AuthView: View {
 
     var body: some View {
         ZStack {
-            Color.bg.ignoresSafeArea()
+            Color.primaryBackground.ignoresSafeArea()
             RadialGradient(
-                colors: [Color.green.opacity(0.03), Color.bg],
+                colors: [Color.green.opacity(0.03), Color.primaryBackground],
                 center: UnitPoint(x: 0.5, y: 0.35),
                 startRadius: 0, endRadius: 350
             ).ignoresSafeArea()
@@ -23,11 +23,11 @@ struct AuthView: View {
                 VStack(spacing: 8) {
                     Text("Formula Helper")
                         .font(.outfit(28, weight: .bold))
-                        .foregroundColor(Color.wht)
+                        .foregroundColor(Color.primaryLabel)
                     Text(showRegister ? "Create your passkey" : "Sign in with your passkey")
                         .font(.outfit(11, weight: .medium))
                         .tracking(2.5)
-                        .foregroundColor(Color.dim)
+                        .foregroundColor(Color.secondaryLabel)
                         .textCase(.uppercase)
                 }
 
@@ -40,12 +40,12 @@ struct AuthView: View {
                             .autocorrectionDisabled()
                             .textInputAutocapitalization(.never)
                             .font(.outfit(15))
-                            .foregroundColor(Color.wht)
+                            .foregroundColor(Color.primaryLabel)
                             .padding(14)
-                            .background(Color.bg2)
+                            .background(Color.secondaryBackground)
                             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                             .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .stroke(Color.borderLight, lineWidth: 1))
+                                .stroke(Color.opaqueSeparator, lineWidth: 1))
                     }
 
                     if let error = errorMessage {
@@ -70,10 +70,10 @@ struct AuthView: View {
                         }
                         .foregroundColor(Color.green)
                         .frame(maxWidth: .infinity, minHeight: 52)
-                        .background(Color.greenBg)
+                        .background(Color.greenFill)
                         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                         .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .stroke(Color.greenBd, lineWidth: 1))
+                            .stroke(Color.greenBorder, lineWidth: 1))
                     }
                     .disabled(isWorking || (showRegister && userName.trimmingCharacters(in: .whitespaces).isEmpty))
 
@@ -84,7 +84,7 @@ struct AuthView: View {
                              ? "Already have a passkey? Sign in"
                              : "New user? Register a passkey")
                             .font(.outfit(12))
-                            .foregroundColor(Color.dim)
+                            .foregroundColor(Color.secondaryLabel)
                     }
                     .padding(.top, 4)
                 }

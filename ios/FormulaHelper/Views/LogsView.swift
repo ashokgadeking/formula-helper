@@ -4,11 +4,9 @@ import SwiftUI
 
 struct LogsView: View {
     @ObservedObject var vm: StateViewModel
-    @Environment(\.dismiss) private var dismiss
 
     @State private var selectedDate: String = ""   // "YYYY-MM-DD"
     @State private var tab: LogTab = .formula
-    @State private var showTrends = false
 
     enum LogTab { case formula, diaper }
 
@@ -57,117 +55,81 @@ struct LogsView: View {
     }
 
     var body: some View {
-        ZStack {
-            Color.bg.ignoresSafeArea()
-            VStack(spacing: 0) {
-                // ── Day banner ──
-                ZStack {
-                    VStack(spacing: 4) {
-                        Text(tab == .formula ? formulaSubtitle : diaperSubtitle)
-                            .font(.outfit(10, weight: .medium))
-                            .tracking(2.5)
-                            .textCase(.uppercase)
-                            .foregroundColor(Color.dim)
-
-                        Text(dateLabel(selectedDate))
-                            .font(.outfit(28, weight: .bold))
-                            .foregroundColor(Color.wht)
+        NavigationStack {
+            ZStack {
+                Color.primaryBackground.ignoresSafeArea()
+                VStack(spacing: 0) {
+                    // ── Segmented picker ──
+                    Picker("", selection: $tab) {
+                        Text("Formula").tag(LogTab.formula)
+                        Text("Diapers").tag(LogTab.diaper)
                     }
+                    .pickerStyle(.segmented)
+                    .padding(.bottom, 12)
 
-                    HStack {
-                        navBtn(direction: -1)
-                        Spacer()
-                        navBtn(direction: +1)
-                    }
-                    .padding(.horizontal, 14)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 20)
+                    // ── Day banner ──
+                    ZStack {
+                        VStack(spacing: 4) {
+                            Text(tab == .formula ? formulaSubtitle : diaperSubtitle)
+                                .appFont(.caption2)
+                                .tracking(1.2)
+                                .foregroundColor(Color.secondaryLabel)
 
-                // ── Formula / Diapers tabs ──
-                HStack(spacing: 1) {
-                    tabBtn("Formula", t: .formula)
-                    tabBtn("Diapers", t: .diaper)
-                }
-                .background(Color.border)
+                            Text(dateLabel(selectedDate))
+                                .appFont(.title1)
+                                .foregroundColor(Color.primaryLabel)
+                        }
 
-                Divider().background(Color.border)
-
-                // ── Entry list ──
-                if tab == .formula {
-                    if formulaEntries.isEmpty {
-                        emptyState("No mixes recorded")
-                    } else {
-                        ScrollView {
-                            VStack(spacing: 6) {
-                                ForEach(Array(formulaEntries.enumerated()), id: \.element.sk) { idx, entry in
-                                    LogRow(entry: entry, index: formulaEntries.count - 1 - idx, vm: vm)
-                                }
-                            }
-                            .padding(14)
-                            .padding(.bottom, 24)
+                        HStack {
+                            navBtn(direction: -1)
+                            Spacer()
+                            navBtn(direction: +1)
                         }
                     }
-                } else {
-                    if diaperEntries.isEmpty {
-                        emptyState("No diapers recorded")
-                    } else {
-                        ScrollView {
-                            VStack(spacing: 6) {
-                                ForEach(diaperEntries) { entry in
-                                    DiaperRow(entry: entry, vm: vm)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
+
+                    Divider().background(Color.separator)
+
+                    // ── Entry list ──
+                    if tab == .formula {
+                        if formulaEntries.isEmpty {
+                            emptyState("No mixes recorded")
+                        } else {
+                            ScrollView {
+                                VStack(spacing: 6) {
+                                    ForEach(Array(formulaEntries.enumerated()), id: \.element.sk) { idx, entry in
+                                        LogRow(entry: entry, index: formulaEntries.count - 1 - idx, vm: vm)
+                                    }
                                 }
+                                .padding(.vertical, 8)
+                                .padding(.bottom, 24)
                             }
-                            .padding(14)
-                            .padding(.bottom, 24)
+                        }
+                    } else {
+                        if diaperEntries.isEmpty {
+                            emptyState("No diapers recorded")
+                        } else {
+                            ScrollView {
+                                VStack(spacing: 6) {
+                                    ForEach(diaperEntries) { entry in
+                                        DiaperRow(entry: entry, vm: vm)
+                                    }
+                                }
+                                .padding(.vertical, 8)
+                                .padding(.bottom, 24)
+                            }
                         }
                     }
-                }
-
-                // ── Bottom bar ──
-                HStack(spacing: 0) {
-                    Button { dismiss() } label: {
-                        Text("Back")
-                            .font(.outfit(15, weight: .semibold))
-                            .foregroundColor(Color.dim)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 64)
-                    }
-                    Rectangle().fill(Color.border).frame(width: 1, height: 64)
-                    Button { showTrends = true } label: {
-                        Text("Trends")
-                            .font(.outfit(15, weight: .semibold))
-                            .foregroundColor(Color.blue)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 64)
-                            .background(Color.blueBg)
-                    }
-                }
-                .background(Color.bg2)
-                .overlay(alignment: .top) {
-                    Rectangle().fill(Color.borderLight).frame(height: 1)
                 }
             }
-        }
-        .sheet(isPresented: $showTrends) {
-            TrendsView(vm: vm, section: tab == .formula ? .formula : .diaper)
+            .navigationTitle("Logs")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Color.primaryBackground, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
         }
         .onAppear { initDate() }
         .onChange(of: tab) { _, _ in initDate() }
-    }
-
-    // MARK: - Subviews
-
-    private func tabBtn(_ label: String, t: LogTab) -> some View {
-        Button { withAnimation(.spring(duration: 0.2)) { tab = t } } label: {
-            Text(label)
-                .font(.outfit(13, weight: .semibold))
-                .tracking(0.5)
-                .foregroundColor(tab == t ? Color.blue : Color.dim)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
-                .background(tab == t ? Color.blueBg : Color.bg2)
-        }
     }
 
     private func navBtn(direction: Int) -> some View {
@@ -181,11 +143,11 @@ struct LogsView: View {
         } label: {
             Image(systemName: direction < 0 ? "chevron.left" : "chevron.right")
                 .font(.system(size: 20, weight: .semibold))
-                .foregroundColor(enabled ? Color.wht : Color.dim2)
+                .foregroundColor(enabled ? Color.primaryLabel : Color.tertiaryLabel)
                 .frame(width: 36, height: 36)
-                .background(Color.card)
+                .background(Color.elevatedBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.border, lineWidth: 1))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.separator, lineWidth: 1))
         }
         .disabled(!enabled)
     }
@@ -195,7 +157,7 @@ struct LogsView: View {
             .overlay(
                 Text(msg)
                     .font(.outfit(14))
-                    .foregroundColor(Color.dim2)
+                    .foregroundColor(Color.tertiaryLabel)
             )
     }
 
@@ -260,7 +222,7 @@ struct DiaperRow: View {
 
             Text(timeStr)
                 .font(.outfit(12))
-                .foregroundColor(Color.dim)
+                .foregroundColor(Color.secondaryLabel)
 
             Spacer()
 
@@ -271,17 +233,17 @@ struct DiaperRow: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(Color.red)
                     .frame(width: 32, height: 32)
-                    .background(Color.redBg)
+                    .background(Color.redFill)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.redBd, lineWidth: 1))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.redBorder, lineWidth: 1))
             }
             .buttonStyle(PlainButtonStyle())
             .padding(.trailing, 14)
         }
         .padding(.vertical, 13)
-        .background(Color.card)
+        .background(Color.elevatedBackground)
         .clipShape(RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.border, lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.separator, lineWidth: 1))
     }
 }
 
@@ -301,44 +263,44 @@ struct LogRow: View {
                 Rectangle().fill(Color.green.opacity(0.4)).frame(width: 3)
                 Text("\(index + 1)")
                     .font(.outfit(10, weight: .semibold)).tracking(0.5)
-                    .foregroundColor(Color.dim2).frame(width: 32)
+                    .foregroundColor(Color.tertiaryLabel).frame(width: 32)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(entry.text)
-                        .font(.outfit(15, weight: .medium)).foregroundColor(Color.wht)
+                        .font(.outfit(15, weight: .medium)).foregroundColor(Color.primaryLabel)
                     if !entry.leftover.isEmpty {
                         Text("\(entry.leftover) leftover")
                             .font(.outfit(11)).foregroundColor(Color.yellow)
                     } else {
                         Text("tap ✎ to record leftover")
-                            .font(.outfit(11)).foregroundColor(Color.dim2)
+                            .font(.outfit(11)).foregroundColor(Color.tertiaryLabel)
                     }
                     if !entry.created_by.isEmpty {
                         Text(entry.created_by)
-                            .font(.outfit(10)).foregroundColor(Color.dim2.opacity(0.6))
+                            .font(.outfit(10)).foregroundColor(Color.tertiaryLabel.opacity(0.6))
                     }
                 }
                 Spacer()
                 HStack(spacing: 6) {
-                    iconBtn("pencil", fg: Color.blue, bg: Color.blueBg, bd: Color.blueBd) {
+                    iconBtn("pencil", fg: Color.blue, bg: Color.blueFill, bd: Color.blueBorder) {
                         withAnimation(.spring(duration: 0.2)) { expanded.toggle() }
                     }
-                    iconBtn("trash", fg: Color.red, bg: Color.redBg, bd: Color.redBd) {
+                    iconBtn("trash", fg: Color.red, bg: Color.redFill, bd: Color.redBorder) {
                         Task { try? await APIClient.shared.deleteEntry(sk: entry.sk); await vm.refresh() }
                     }
                 }
                 .padding(.trailing, 14)
             }
             .padding(.vertical, 13)
-            .background(Color.card)
+            .background(Color.elevatedBackground)
 
             if expanded {
                 HStack(spacing: 8) {
                     TextField("Leftover ml", text: $leftover)
-                        .keyboardType(.numberPad).font(.outfit(14)).foregroundColor(Color.wht)
+                        .keyboardType(.numberPad).font(.outfit(14)).foregroundColor(Color.primaryLabel)
                         .padding(.horizontal, 14).padding(.vertical, 12)
-                        .background(Color.bg)
+                        .background(Color.primaryBackground)
                         .clipShape(RoundedRectangle(cornerRadius: 10))
-                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.borderLight, lineWidth: 1))
+                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.opaqueSeparator, lineWidth: 1))
                     Button(saving ? "…" : "Save") {
                         guard !saving else { return }; saving = true
                         Task {
@@ -348,17 +310,17 @@ struct LogRow: View {
                     }
                     .font(.outfit(14, weight: .semibold)).foregroundColor(Color.green)
                     .padding(.horizontal, 16).padding(.vertical, 12)
-                    .background(Color.greenBg)
+                    .background(Color.greenFill)
                     .clipShape(RoundedRectangle(cornerRadius: 10))
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.greenBd, lineWidth: 1))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.greenBorder, lineWidth: 1))
                     .disabled(saving)
                 }
-                .padding(.horizontal, 14).padding(.vertical, 10).background(Color.card2)
+                .padding(.horizontal, 14).padding(.vertical, 10).background(Color.overlayBackground)
                 .onAppear { leftover = entry.leftover }
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.border, lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.separator, lineWidth: 1))
         .animation(.spring(duration: 0.2), value: expanded)
     }
 

@@ -27,7 +27,7 @@ struct ContentView: View {
 
 struct LoadingView: View {
     var body: some View {
-        ZStack { Color.bg.ignoresSafeArea(); ProgressView().tint(Color.dim) }
+        ZStack { Color.primaryBackground.ignoresSafeArea(); ProgressView().tint(Color.secondaryLabel) }
     }
 }
 
@@ -114,6 +114,18 @@ final class StateViewModel: ObservableObject {
         expiryTask = nil
         await liveActivity?.end(dismissalPolicy: .immediate)
         liveActivity = nil
+    }
+
+    // Called when the app becomes active — sweep any expired activity.
+    func dismissExpiredActivityIfNeeded() async {
+        for activity in Activity<FormulaActivityAttributes>.activities {
+            if activity.content.state.countdownEnd <= Date() {
+                await activity.end(nil, dismissalPolicy: .immediate)
+            }
+        }
+        if let live = liveActivity, live.content.state.countdownEnd <= Date() {
+            liveActivity = nil
+        }
     }
 
     private func scheduleActivityExpiry(at end: Date) {
@@ -242,61 +254,73 @@ final class StateViewModel: ObservableObject {
 
 struct MainView: View {
     @ObservedObject var vm: StateViewModel
-    @EnvironmentObject var auth: AuthManager
-    @State private var showSettings = false
-    @State private var showLogs     = false
-    @State private var showCustom   = false
+    var body: some View { RootTabView(vm: vm) }
+}
+
+// MARK: - Root tab view
+
+struct RootTabView: View {
+    @ObservedObject var vm: StateViewModel
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .topTrailing) {
-                Color.bg.ignoresSafeArea()
-
-                VStack(spacing: 0) {
-                    // ── Banner ── ~75% of screen
-                    BannerView(vm: vm)
-                        .frame(height: geo.size.height * 0.70)
-
-                    // ── Fixed button grid ── ~25%
-                    ButtonGrid(vm: vm, showLogs: $showLogs, showCustom: $showCustom)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        TabView {
+            FeedTab(vm: vm)
+                .tabItem { Image(systemName: "drop.fill") }
+            LogsView(vm: vm)
+                .tabItem { Image(systemName: "list.bullet") }
+            TrendsView(vm: vm, section: .formula)
+                .tabItem { Image(systemName: "chart.bar.fill") }
+            SettingsView(vm: vm)
+                .tabItem { Image(systemName: "gearshape.fill") }
+        }
+        .toolbarBackground(Color.primaryBackground.opacity(0.85), for: .tabBar)
+        .toolbarBackground(.visible, for: .tabBar)
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                Task {
+                    await vm.dismissExpiredActivityIfNeeded()
+                    await vm.refresh()
                 }
-
-                // Gear — ashok only
-                if auth.authState.userName == "ashok" {
-                    Button { showSettings = true } label: {
-                        Image(systemName: "gearshape.fill")
-                            .foregroundColor(Color.dim2)
-                            .font(.system(size: 20))
-                            .padding(16)
-                    }
-                    .padding(.top, 44)
-                }
-
-#if DEBUG
-                // Live Activity test button — bottom left
-                VStack {
-                    Spacer()
-                    HStack {
-                        Button("▶ LA") {
-                            Task { await vm.debugStartLiveActivity() }
-                        }
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(Color.dim)
-                        .padding(.horizontal, 10).padding(.vertical, 6)
-                        .background(Color.card2)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.border, lineWidth: 1))
-                        .padding(.leading, 14).padding(.bottom, 20)
-                        Spacer()
-                    }
-                }
-#endif
             }
         }
-        .ignoresSafeArea(edges: .top)
-        .sheet(isPresented: $showSettings) { SettingsView(vm: vm) }
-        .sheet(isPresented: $showLogs)     { LogsView(vm: vm) }
+    }
+}
+
+// MARK: - Feed tab
+
+struct FeedTab: View {
+    @ObservedObject var vm: StateViewModel
+    @State private var showCustom = false
+
+    var presets: [Int] {
+        let raw = vm.state?.combos.map { Int($0[0]) } ?? []
+        return raw.isEmpty ? [90, 100, 120] : raw
+    }
+
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            Color.primaryBackground.ignoresSafeArea()
+
+            VStack(spacing: 16) {
+                HeroCard(vm: vm)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                QuickLogSection(vm: vm, presets: presets, showCustom: $showCustom)
+            }
+            .padding(.top, 8)
+            .padding(.bottom, 24)
+
+#if DEBUG
+            Button("▶ LA") { Task { await vm.debugStartLiveActivity() } }
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(Color.secondaryLabel)
+                .padding(.horizontal, 10).padding(.vertical, 6)
+                .background(Color.overlayBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.separator, lineWidth: 1))
+                .padding(.leading, 20).padding(.bottom, 8)
+#endif
+        }
         .sheet(isPresented: $showCustom) {
             AmountSheet(title: "Custom Amount", cta: "Start Feeding", isPresented: $showCustom,
                         powderPer60: vm.state?.powder_per_60 ?? 8.3) { ml in
@@ -306,9 +330,9 @@ struct MainView: View {
     }
 }
 
-// MARK: - Banner
+// MARK: - Hero card (timer)
 
-struct BannerView: View {
+struct HeroCard: View {
     @ObservedObject var vm: StateViewModel
 
     var body: some View {
@@ -338,61 +362,56 @@ private struct BannerContent: View {
         ZStack {
             if isExpired {
                 LinearGradient(
-                    colors: [Color.red.opacity(0.08), Color(hex: "#50000a").opacity(0.4)],
+                    colors: [Color.red.opacity(0.08), Color(hex: "#50000a").opacity(0.35)],
                     startPoint: .top, endPoint: .bottom)
+                    .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
             } else {
-                RadialGradient(
-                    colors: [Color.green.opacity(0.04), Color.bg],
-                    center: UnitPoint(x: 0.5, y: 0.4),
-                    startRadius: 0, endRadius: 280)
+                Color.primaryBackground
             }
 
             VStack(spacing: 8) {
-                Spacer()
-
                 if let state = vm.state {
                     if !hasBottle {
                         subLabel("No active bottle", expired: false)
                         Text("–")
-                            .font(.outfit(58, weight: .bold))
-                            .foregroundColor(Color.dim2)
+                            .font(.custom("Outfit", size: 72, relativeTo: .largeTitle).bold())
+                            .foregroundColor(Color.tertiaryLabel)
                     } else if isExpired {
                         subLabel("Bottle expired", expired: true)
                         Text("DISCARD")
-                            .font(.outfit(44, weight: .bold))
+                            .font(.custom("Outfit", size: 52, relativeTo: .largeTitle).bold())
                             .foregroundColor(Color.red)
                             .tracking(-0.5)
                     } else {
                         subLabel("\(state.mixed_ml)ml mixed at \(state.mixed_at_str)", expired: false)
                         Text(formatTimer(liveRemaining))
-                            .font(.outfit(68, weight: .bold))
+                            .font(.custom("Outfit", size: 72, relativeTo: .largeTitle).bold())
                             .foregroundColor(Color.green)
                             .monospacedDigit()
-                            .tracking(-2)
+                            .tracking(-1.5)
                     }
 
                     if let est = vm.nextFeedingEstimate {
                         Text(est)
-                            .font(.outfit(11, weight: .medium))
-                            .tracking(2.5)
-                            .foregroundColor(isExpired ? Color.red.opacity(0.6) : Color.dim)
-                            .padding(.top, 2)
+                            .appFont(.subheadline)
+                            .tracking(1.2)
+                            .foregroundColor(isExpired ? Color.red.opacity(0.6) : Color.secondaryLabel)
+                            .padding(.top, 4)
                     }
                 } else {
-                    ProgressView().tint(Color.dim)
+                    ProgressView().tint(Color.secondaryLabel)
                 }
-
-                Spacer()
             }
-            .frame(maxWidth: .infinity)
+            .padding(.vertical, 16)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
     private func subLabel(_ s: String, expired: Bool) -> some View {
         Text(s.uppercased())
-            .font(.outfit(11, weight: .medium))
-            .tracking(2.5)
-            .foregroundColor(expired ? Color.red.opacity(0.7) : Color.dim)
+            .appFont(.footnote)
+            .tracking(1.5)
+            .foregroundColor(expired ? Color.red.opacity(0.7) : Color.secondaryLabel)
     }
 
     private func formatTimer(_ secs: Double) -> String {
@@ -401,116 +420,156 @@ private struct BannerContent: View {
     }
 }
 
-// MARK: - Button grid (fixed layout)
+// MARK: - Quick log cards
 
-struct ButtonGrid: View {
+struct QuickLogSection: View {
     @ObservedObject var vm: StateViewModel
-    @Binding var showLogs: Bool
+    let presets: [Int]
     @Binding var showCustom: Bool
 
-    // Use combos from state, drop 60ml, keep 90/100/120
-    var presets: [Int] {
-        vm.state?.combos.map { Int($0[0]) } ?? [90, 100, 120]
-    }
-
-    var pee: Int { vm.todayDiaperCounts.pee }
-    var poo: Int { vm.todayDiaperCounts.poo }
+    private let pooColor = Color(hex: "#c87941")
 
     var body: some View {
-        // Rows 1 & 2 share weight 10 each, row 3 gets weight 7 (30% less)
-        // Total weight = 27 → row1&2 = 10/27 each, row3 = 7/27
-        // Weights: presets=8, diapers=14, log/custom=5  (total=27)
-        GeometryReader { geo in
-            let h = geo.size.height
-            let presetH = h * 8 / 27
-            let diaperH = h * 14 / 27
-            let actionH = h * 5 / 27
-
-            VStack(spacing: 1) {
-                // Row 1: 90 | 100 | 120
-                HStack(spacing: 1) {
-                    ForEach(presets, id: \.self) { ml in startBtn(ml: ml) }
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                ForEach(presets, id: \.self) { ml in
+                    FormulaCard(ml: ml) { Task { await vm.startFeeding(ml: ml) } }
                 }
-                .frame(height: presetH)
-
-                // Row 2: Pee | Poo
-                HStack(spacing: 1) {
-                    diaperBtn(type: "pee", count: pee, label: "PEE",
-                              fg: Color.yellow, bg: Color.yellow.opacity(0.06))
-                    diaperBtn(type: "poo", count: poo, label: "POO",
-                              fg: Color(hex: "#c87941"), bg: Color(hex: "#c87941").opacity(0.08))
-                }
-                .frame(height: diaperH)
-
-                // Row 3: Log | Custom
-                HStack(spacing: 1) {
-                    gridBtn("Log", fg: Color.blue, bg: Color.blueBg)               { showLogs   = true }
-                    gridBtn("Custom Amount", fg: Color.purple, bg: Color.purpleBg) { showCustom = true }
-                }
-                .frame(height: actionH)
             }
-            .background(Color.border)
+
+            HStack(spacing: 8) {
+                DiaperCard(
+                    symbol: "drop.fill",
+                    label: "PEE",
+                    count: vm.todayDiaperCounts.pee,
+                    lastTime: vm.lastDiaperTime(type: "pee"),
+                    fg: Color.yellow,
+                    bg: Color.yellow.opacity(0.06),
+                    border: Color.yellow.opacity(0.18)
+                ) { Task { await vm.logDiaper(type: "pee") } }
+
+                DiaperCard(
+                    symbol: "circle.fill",
+                    label: "POO",
+                    count: vm.todayDiaperCounts.poo,
+                    lastTime: vm.lastDiaperTime(type: "poo"),
+                    fg: pooColor,
+                    bg: pooColor.opacity(0.08),
+                    border: pooColor.opacity(0.20)
+                ) { Task { await vm.logDiaper(type: "poo") } }
+            }
+
+            CustomAmountCard { showCustom = true }
         }
     }
+}
 
-    private func startBtn(ml: Int) -> some View {
-        Button { Task { await vm.startFeeding(ml: ml) } } label: {
-            VStack(spacing: 2) {
-                Text("\(ml)")
-                    .font(.outfit(36, weight: .bold))
-                    .foregroundColor(Color.green)
-                    .tracking(-1)
-                Text("ML")
-                    .font(.outfit(9, weight: .medium))
-                    .tracking(0.5)
-                    .foregroundColor(Color.green.opacity(0.4))
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.green.opacity(0.06))
-        }
-        .buttonStyle(PlainButtonStyle())
-    }
+struct FormulaCard: View {
+    let ml: Int
+    let action: () -> Void
 
-    private func diaperBtn(type: String, count: Int, label: String, fg: Color, bg: Color) -> some View {
-        Button { Task { await vm.logDiaper(type: type) } } label: {
-            VStack(spacing: 3) {
-                // Last changed — only on the most recently used diaper type
-                if let ts = vm.lastDiaperTime(type: type) {
-                    Text("LAST \(ts)")
-                        .font(.outfit(11, weight: .medium))
-                        .tracking(0.8)
-                        .foregroundColor(fg.opacity(0.4))
-                } else {
-                    Text(" ").font(.outfit(11))
-                }
-
-                // Label
-                Text(label)
-                    .font(.outfit(36, weight: .bold))
-                    .tracking(-1)
-                    .foregroundColor(fg.opacity(0.85))
-
-                // Count
-                Text("\(count)")
-                    .font(.outfit(11, weight: .medium))
-                    .tracking(0.8)
-                    .foregroundColor(fg.opacity(0.4))
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(bg)
-        }
-        .buttonStyle(PlainButtonStyle())
-    }
-
-    private func gridBtn(_ label: String, fg: Color, bg: Color, action: @escaping () -> Void) -> some View {
+    var body: some View {
         Button(action: action) {
-            Text(label)
-                .font(.outfit(14, weight: .semibold))
-                .foregroundColor(fg)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(bg)
+            VStack(spacing: 0) {
+                Text("\(ml)")
+                    .font(.custom("Outfit", size: 32, relativeTo: .title).bold())
+                    .foregroundColor(Color.green)
+                    .monospacedDigit()
+                    .tracking(-0.5)
+                Text("ml")
+                    .appFont(.caption2)
+                    .tracking(1.5)
+                    .foregroundColor(Color.green.opacity(0.55))
+            }
+            .frame(maxWidth: .infinity, minHeight: 80)
+            .background(Color.green.opacity(0.08))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(Color.greenBorder, lineWidth: 1)
+            )
         }
-        .buttonStyle(PlainButtonStyle())
+        .buttonStyle(ScaledButtonStyle())
+        .accessibilityLabel("Start \(ml) millilitre bottle")
+    }
+}
+
+struct DiaperCard: View {
+    let symbol: String
+    let label: String
+    let count: Int
+    let lastTime: String?
+    let fg: Color
+    let bg: Color
+    let border: Color
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .center, spacing: 8) {
+                    Image(systemName: symbol)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(fg)
+                    Text(label)
+                        .appFont(.headline)
+                        .tracking(0.5)
+                        .foregroundColor(fg)
+                    Spacer(minLength: 4)
+                    if count > 0 {
+                        Text("×\(count)")
+                            .appFont(.footnote)
+                            .foregroundColor(fg.opacity(0.6))
+                    }
+                }
+                if let ts = lastTime {
+                    Text("LAST \(ts.uppercased())")
+                        .appFont(.caption2)
+                        .tracking(1.2)
+                        .foregroundColor(fg.opacity(0.45))
+                } else {
+                    Text(" ")
+                        .appFont(.caption2)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 14)
+            .frame(maxWidth: .infinity, minHeight: 80, alignment: .leading)
+            .background(bg)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(border, lineWidth: 1)
+            )
+        }
+        .buttonStyle(ScaledButtonStyle())
+        .accessibilityLabel("Log \(label.lowercased()) diaper")
+    }
+}
+
+struct CustomAmountCard: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(Color.purple)
+                Text("Custom Amount")
+                    .appFont(.headline)
+                    .foregroundColor(Color.purple)
+            }
+            .frame(maxWidth: .infinity, minHeight: 48)
+            .background(Color.purpleFill)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(Color.purpleBorder, lineWidth: 1)
+            )
+        }
+        .buttonStyle(ScaledButtonStyle())
+        .accessibilityLabel("Log custom amount")
     }
 }
 
@@ -527,101 +586,136 @@ struct AmountSheet: View {
     private var powder: Double { Double(water) * (powderPer60 / 60.0) }
 
     var body: some View {
-        ZStack {
-            Color.bg.ignoresSafeArea()
-            VStack(spacing: 0) {
-                // ── Header ──
-                Text(title)
-                    .font(.outfit(16, weight: .semibold))
-                    .foregroundColor(Color.wht)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.top, 20)
-                    .padding(.bottom, 24)
+        NavigationStack {
+            ZStack {
+                Color.primaryBackground.ignoresSafeArea()
 
-                // ── Two panels ──
-                HStack(spacing: 12) {
-                    // Water panel
-                    ZStack(alignment: .bottom) {
-                        VStack(spacing: 6) {
-                            Text("WATER")
-                                .font(.outfit(10, weight: .semibold))
-                                .tracking(1.5)
-                                .foregroundColor(Color.blue)
-                            Text("\(water)")
-                                .font(.outfit(52, weight: .bold))
-                                .foregroundColor(Color.blue)
-                                .monospacedDigit()
-                            Text("ml")
-                                .font(.outfit(14, weight: .medium))
-                                .foregroundColor(Color.dim)
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                        HStack(spacing: 10) {
-                            pmButton("-", bg: Color.redBg, fg: Color.red) { water = max(0, water - 10) }
-                            pmButton("+", bg: Color.blueBg, fg: Color.blue) { water = min(500, water + 10) }
-                        }
-                        .padding(.bottom, 20)
+                VStack(spacing: 24) {
+                    // ── Display panels ──
+                    HStack(spacing: 12) {
+                        amountPanel(
+                            label: "WATER",
+                            value: "\(water)",
+                            unit: "ml",
+                            color: Color.blue,
+                            fill: Color.blueFill,
+                            border: Color.blueBorder
+                        )
+                        amountPanel(
+                            label: "POWDER",
+                            value: water > 0 ? String(format: "%.1f", powder) : "—",
+                            unit: "g",
+                            color: water > 0 ? Color.green : Color.tertiaryLabel,
+                            fill: water > 0 ? Color.greenFill : Color.tertiaryFill,
+                            border: water > 0 ? Color.greenBorder : Color.separator
+                        )
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color.bg2)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.border, lineWidth: 1))
+                    .frame(height: 196)
+                    .padding(.horizontal, 16)
 
-                    // Powder panel
-                    VStack(spacing: 6) {
-                        Text("POWDER")
-                            .font(.outfit(10, weight: .semibold))
-                            .tracking(1.5)
-                            .foregroundColor(water > 0 ? Color.green : Color.dim)
-                        Text(water > 0 ? String(format: "%.1f", powder) : "--")
-                            .font(.outfit(52, weight: .bold))
-                            .foregroundColor(water > 0 ? Color.green : Color.dim)
+                    // ── Stepper row ──
+                    HStack(spacing: 16) {
+                        stepperBtn(symbol: "minus", fill: Color.redFill, fg: Color.red, border: Color.redBorder) {
+                            water = max(0, water - 10)
+                        }
+                        .accessibilityLabel("Decrease by 10 ml")
+
+                        Text("\(water) ml")
+                            .appFont(.title3)
+                            .foregroundColor(Color.primaryLabel)
                             .monospacedDigit()
-                        Text("g")
-                            .font(.outfit(14, weight: .medium))
-                            .foregroundColor(Color.dim)
+                            .frame(maxWidth: .infinity, alignment: .center)
+
+                        stepperBtn(symbol: "plus", fill: Color.blueFill, fg: Color.blue, border: Color.blueBorder) {
+                            water = min(500, water + 10)
+                        }
+                        .accessibilityLabel("Increase by 10 ml")
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(water > 0 ? Color(red: 0.07, green: 0.17, blue: 0.1) : Color.bg2)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.border, lineWidth: 1))
-                }
-                .padding(.horizontal, 20)
+                    .padding(.horizontal, 16)
 
-                // ── Bottom bar ──
-                HStack(spacing: 0) {
-                    Button("Cancel") { isPresented = false }
-                        .font(.outfit(15, weight: .semibold))
-                        .foregroundColor(Color.dim)
-                        .frame(maxWidth: .infinity, minHeight: 64)
-
-                    Rectangle().fill(Color.border).frame(width: 1, height: 64)
-
-                    Button(cta) {
-                        if water > 0 { onConfirm(water); isPresented = false }
+                    // ── CTA ──
+                    Button {
+                        guard water > 0 else { return }
+                        onConfirm(water)
+                        isPresented = false
+                    } label: {
+                        Text(cta)
+                            .appFont(.headline)
+                            .foregroundColor(water > 0 ? Color.green : Color.tertiaryLabel)
+                            .frame(maxWidth: .infinity, minHeight: 56)
+                            .background(water > 0 ? Color.greenFill : Color.tertiaryFill)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .stroke(water > 0 ? Color.greenBorder : Color.separator, lineWidth: 1)
+                            )
                     }
                     .disabled(water <= 0)
-                    .font(.outfit(15, weight: .semibold))
-                    .foregroundColor(water > 0 ? Color.green : Color.dim)
-                    .frame(maxWidth: .infinity, minHeight: 64)
-                    .background(water > 0 ? Color.greenBg : Color.clear)
+                    .buttonStyle(ScaledButtonStyle())
+                    .padding(.horizontal, 16)
+                    .accessibilityLabel(cta)
                 }
-                .background(Color.bg2)
-                .overlay(Rectangle().fill(Color.border).frame(height: 1), alignment: .top)
+                .padding(.top, 8)
+            }
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { isPresented = false }
+                        .foregroundColor(Color.secondaryLabel)
+                }
             }
         }
+        .presentationDetents([.fraction(0.6), .large])
+        .presentationDragIndicator(.visible)
+        .presentationBackground(Color.primaryBackground)
     }
 
-    private func pmButton(_ label: String, bg: Color, fg: Color, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+    private func amountPanel(label: String, value: String, unit: String,
+                              color: Color, fill: Color, border: Color) -> some View {
+        VStack(spacing: 0) {
             Text(label)
-                .font(.outfit(22, weight: .bold))
-                .foregroundColor(fg)
-                .frame(width: 52, height: 44)
-                .background(bg)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .appFont(.caption2)
+                .tracking(1.2)
+                .foregroundColor(color)
+                .padding(.top, 20)
+            Spacer()
+            Text(value)
+                .font(.custom("Outfit", size: 52, relativeTo: .largeTitle).bold())
+                .foregroundColor(color)
+                .monospacedDigit()
+                .minimumScaleFactor(0.6)
+                .lineLimit(1)
+            Text(unit)
+                .appFont(.callout)
+                .foregroundColor(Color.secondaryLabel)
+                .padding(.top, 4)
+            Spacer()
         }
+        .frame(maxWidth: .infinity)
+        .background(fill)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(border, lineWidth: 1)
+        )
+    }
+
+    private func stepperBtn(symbol: String, fill: Color, fg: Color, border: Color,
+                             action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundColor(fg)
+                .frame(width: 56, height: 56)
+                .background(fill)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(border, lineWidth: 1)
+                )
+        }
+        .buttonStyle(ScaledButtonStyle())
     }
 }
 

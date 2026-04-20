@@ -5,84 +5,39 @@ import Charts
 
 struct TrendsView: View {
     @ObservedObject var vm: StateViewModel
-    @Environment(\.dismiss) private var dismiss
     @State var section: TrendSection
 
     enum TrendSection { case formula, diaper }
 
     var body: some View {
-        ZStack {
-            Color.bg.ignoresSafeArea()
-            VStack(spacing: 0) {
-                headerView
-                sectionTabBar
-                Divider().background(Color.border)
-                // Both sections fill remaining space — no outer ScrollView
-                if section == .formula {
-                    FormulaTrends(vm: vm)
-                } else {
-                    DiaperTrends(vm: vm)
+        NavigationStack {
+            ZStack {
+                Color.primaryBackground.ignoresSafeArea()
+                VStack(spacing: 0) {
+                    Picker("", selection: $section) {
+                        Text("Formula").tag(TrendSection.formula)
+                        Text("Diapers").tag(TrendSection.diaper)
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
+
+                    Divider().background(Color.separator)
+
+                    if section == .formula {
+                        FormulaTrends(vm: vm)
+                    } else {
+                        DiaperTrends(vm: vm)
+                    }
                 }
-                bottomBar
             }
+            .navigationTitle("Trends")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Color.primaryBackground, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
         }
     }
 
-    // MARK: - Header
-
-    private var headerView: some View {
-        VStack(spacing: 4) {
-            Text(section == .formula ? "FORMULA" : "DIAPERS")
-                .font(.outfit(10, weight: .medium))
-                .tracking(2.5)
-                .foregroundColor(Color.dim)
-            Text(section == .formula ? "Consumption" : "Diaper Log")
-                .font(.outfit(28, weight: .bold))
-                .foregroundColor(Color.wht)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 20)
-    }
-
-    // MARK: - Section tabs
-
-    private var sectionTabBar: some View {
-        HStack(spacing: 1) {
-            sectionTabBtn("Formula", s: .formula)
-            sectionTabBtn("Diapers", s: .diaper)
-        }
-        .background(Color.border)
-    }
-
-    private func sectionTabBtn(_ label: String, s: TrendSection) -> some View {
-        Button { withAnimation(.spring(duration: 0.2)) { section = s } } label: {
-            Text(label)
-                .font(.outfit(13, weight: .semibold))
-                .tracking(0.5)
-                .foregroundColor(section == s ? Color.blue : Color.dim)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
-                .background(section == s ? Color.blueBg : Color.bg2)
-        }
-    }
-
-    // MARK: - Bottom bar
-
-    private var bottomBar: some View {
-        HStack(spacing: 0) {
-            Button { dismiss() } label: {
-                Text("Back")
-                    .font(.outfit(15, weight: .semibold))
-                    .foregroundColor(Color.dim)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 64)
-            }
-        }
-        .background(Color.bg2)
-        .overlay(alignment: .top) {
-            Rectangle().fill(Color.borderLight).frame(height: 1)
-        }
-    }
 }
 
 // MARK: - Formula Trends
@@ -180,24 +135,27 @@ private struct FormulaTrends: View {
     var body: some View {
         VStack(spacing: 0) {
             // Range pill tabs
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(FormulaRange.allCases, id: \.self) { r in
-                        Button { withAnimation(.spring(duration: 0.2)) { range = r } } label: {
-                            Text(r.rawValue)
-                                .font(.outfit(12, weight: .semibold))
-                                .foregroundColor(range == r ? Color.blue : Color.dim)
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 7)
-                                .background(range == r ? Color.blueBg : Color.card)
-                                .clipShape(Capsule())
-                                .overlay(Capsule().stroke(range == r ? Color.blueBd : Color.border, lineWidth: 1))
-                        }
+            HStack(spacing: 0) {
+                ForEach(FormulaRange.allCases, id: \.self) { r in
+                    Button { withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) { range = r } } label: {
+                        Text(r.rawValue)
+                            .font(.outfit(12, weight: range == r ? .semibold : .regular))
+                            .foregroundColor(range == r ? Color.primaryLabel : Color.secondaryLabel)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 7)
+                                    .fill(Color.elevatedBackground)
+                                    .opacity(range == r ? 1 : 0)
+                            )
                     }
+                    .buttonStyle(.plain)
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
             }
+            .padding(3)
+            .background(Color.overlayBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .padding(.vertical, 10)
 
             // Stat cards
             LazyVGrid(columns: [.init(.flexible()), .init(.flexible()), .init(.flexible())], spacing: 8) {
@@ -205,14 +163,12 @@ private struct FormulaTrends: View {
                 statCard(value: "\(bottleCount)",    label: "Bottles",     color: Color.green)
                 statCard(value: fmtMl(avgMlPerDay), label: "Avg ml/day",  color: Color.yellow)
             }
-            .padding(.horizontal, 14)
 
             // Insight cards
             HStack(spacing: 8) {
                 insightCard(value: dayGap,   label: "☀️ Avg gap · Day",   color: Color.yellow)
                 insightCard(value: nightGap, label: "🌙 Avg gap · Night", color: Color.purple)
             }
-            .padding(.horizontal, 14)
             .padding(.top, 8)
 
             // Bar chart — fills all remaining space
@@ -220,11 +176,10 @@ private struct FormulaTrends: View {
                 Spacer()
                 Text("No entries for this period")
                     .font(.outfit(13))
-                    .foregroundColor(Color.dim2)
+                    .foregroundColor(Color.tertiaryLabel)
                 Spacer()
             } else {
                 barChart
-                    .padding(.horizontal, 14)
                     .padding(.top, 12)
                     .padding(.bottom, 14)
                     .frame(maxHeight: .infinity)
@@ -235,7 +190,10 @@ private struct FormulaTrends: View {
     // MARK: - Bar chart
 
     private var barChart: some View {
-        Chart(dailyBars) { item in
+        let maxMl = dailyBars.map(\.ml).max() ?? 0
+        let step = max(100, ((maxMl / 3) / 100) * 100)
+        let yVals = Array(stride(from: step, through: maxMl, by: step))
+        return Chart(dailyBars) { item in
             BarMark(
                 x: .value("Day", item.day, unit: .day),
                 y: .value("ml", item.ml)
@@ -247,17 +205,30 @@ private struct FormulaTrends: View {
             AxisMarks(values: .stride(by: .day, count: chartStride)) { _ in
                 AxisValueLabel(format: .dateTime.month(.abbreviated).day(), centered: true)
                     .font(.outfit(9))
-                    .foregroundStyle(Color.dim)
+                    .foregroundStyle(Color.secondaryLabel)
             }
         }
         .chartYAxis {
-            AxisMarks(position: .leading) { value in
-                AxisValueLabel {
-                    if let v = value.as(Int.self) {
-                        Text("\(v)").font(.outfit(9)).foregroundStyle(Color.dim)
+            AxisMarks { _ in
+                AxisGridLine().foregroundStyle(Color.separator)
+            }
+        }
+        .chartOverlay { proxy in
+            GeometryReader { _ in
+                ZStack(alignment: .topLeading) {
+                    ForEach(yVals, id: \.self) { v in
+                        if let yPos = proxy.position(forY: v) {
+                            Text(v >= 1000 ? String(format: "%.1fL", Double(v) / 1000) : "\(v)")
+                                .font(.system(size: 8, weight: .medium))
+                                .foregroundColor(Color.secondaryLabel)
+                                .padding(.horizontal, 3)
+                                .background(Color.black.opacity(0.25))
+                                .clipShape(RoundedRectangle(cornerRadius: 2))
+                                .position(x: 18, y: yPos)
+                        }
                     }
                 }
-                AxisGridLine().foregroundStyle(Color.border)
+                .allowsHitTesting(false)
             }
         }
         .chartLegend(position: .topTrailing, spacing: 8) {
@@ -267,14 +238,14 @@ private struct FormulaTrends: View {
             }
         }
         .chartPlotStyle { plot in
-            plot.background(Color.card2).cornerRadius(12)
+            plot.background(Color.overlayBackground).cornerRadius(12)
         }
     }
 
     private func legendDot(_ color: Color, _ label: String) -> some View {
         HStack(spacing: 4) {
             Circle().fill(color).frame(width: 7, height: 7)
-            Text(label).font(.outfit(10)).foregroundColor(Color.dim)
+            Text(label).font(.outfit(10)).foregroundColor(Color.secondaryLabel)
         }
     }
 
@@ -326,23 +297,16 @@ private struct FormulaTrends: View {
                 .foregroundColor(color)
                 .lineLimit(1).minimumScaleFactor(0.7)
             Text(label.uppercased())
-                .font(.outfit(8, weight: .semibold))
-                .tracking(1.5)
-                .foregroundColor(Color.dim)
+                .appFont(.caption2)
+                .tracking(1.0)
+                .foregroundColor(Color.secondaryLabel)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 14)
         .padding(.horizontal, 6)
-        .background(Color.card2)
+        .background(Color.overlayBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(color.opacity(0.25), lineWidth: 1)
-                .overlay(alignment: .top) {
-                    Rectangle().fill(color).frame(height: 2)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                }
-        )
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(color.opacity(0.25), lineWidth: 1))
     }
 
     private func insightCard(value: String, label: String, color: Color) -> some View {
@@ -351,22 +315,15 @@ private struct FormulaTrends: View {
                 .font(.outfit(20, weight: .bold))
                 .foregroundColor(color)
             Text(label.uppercased())
-                .font(.outfit(8, weight: .semibold))
-                .tracking(1.5)
-                .foregroundColor(Color.dim)
+                .appFont(.caption2)
+                .tracking(1.0)
+                .foregroundColor(Color.secondaryLabel)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .background(Color.card2)
+        .background(Color.overlayBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(color.opacity(0.25), lineWidth: 1)
-                .overlay(alignment: .top) {
-                    Rectangle().fill(color).frame(height: 2)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                }
-        )
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(color.opacity(0.25), lineWidth: 1))
     }
 }
 
@@ -393,10 +350,10 @@ private struct DiaperTrends: View {
         let now = Date()
         let cutoff: Date?
         switch range {
-        case .today:  cutoff = Calendar.current.startOfDay(for: now)
-        case .week:   cutoff = Calendar.current.date(byAdding: .day, value: -7,  to: now)
-        case .month:  cutoff = Calendar.current.date(byAdding: .day, value: -30, to: now)
-        case .all:    cutoff = nil
+        case .today: cutoff = Calendar.current.startOfDay(for: now)
+        case .week:  cutoff = Calendar.current.date(byAdding: .day, value: -7,  to: now)
+        case .month: cutoff = Calendar.current.date(byAdding: .day, value: -30, to: now)
+        case .all:   cutoff = nil
         }
         guard let cutoff else { return entries }
         return entries.filter { e in
@@ -405,44 +362,45 @@ private struct DiaperTrends: View {
         }
     }
 
-    // Group entries by "YYYY-MM-DD" key, sorted ascending
     private var byDate: [(key: String, entries: [DiaperEntry])] {
         let f = entryFormatter
         var dict: [String: [DiaperEntry]] = [:]
         for e in filtered {
             guard let d = f.date(from: e.date) else { continue }
             let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd"
-            let key = df.string(from: d)
-            dict[key, default: []].append(e)
+            dict[df.string(from: d), default: []].append(e)
         }
         return dict.map { (key: $0.key, entries: $0.value) }.sorted { $0.key < $1.key }
     }
 
-    private var total: Int { filtered.count }
+    private var total: Int    { filtered.count }
     private var peeCount: Int { filtered.filter { $0.type == "pee" }.count }
     private var pooCount: Int { filtered.filter { $0.type == "poo" }.count }
 
     var body: some View {
         VStack(spacing: 0) {
             // Range pills
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(DiaperRange.allCases, id: \.self) { r in
-                        Button { withAnimation(.spring(duration: 0.2)) { range = r } } label: {
-                            Text(r.rawValue)
-                                .font(.outfit(12, weight: .semibold))
-                                .foregroundColor(range == r ? Color.blue : Color.dim)
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 7)
-                                .background(range == r ? Color.blueBg : Color.card)
-                                .clipShape(Capsule())
-                                .overlay(Capsule().stroke(range == r ? Color.blueBd : Color.border, lineWidth: 1))
-                        }
+            HStack(spacing: 0) {
+                ForEach(DiaperRange.allCases, id: \.self) { r in
+                    Button { withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) { range = r } } label: {
+                        Text(r.rawValue)
+                            .font(.outfit(12, weight: range == r ? .semibold : .regular))
+                            .foregroundColor(range == r ? Color.primaryLabel : Color.secondaryLabel)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 7)
+                                    .fill(Color.elevatedBackground)
+                                    .opacity(range == r ? 1 : 0)
+                            )
                     }
+                    .buttonStyle(.plain)
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
             }
+            .padding(3)
+            .background(Color.overlayBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .padding(.vertical, 10)
 
             // Stat cards
             LazyVGrid(columns: [.init(.flexible()), .init(.flexible()), .init(.flexible())], spacing: 8) {
@@ -450,11 +408,10 @@ private struct DiaperTrends: View {
                 statCard(value: "\(peeCount)", label: "💧 Pee", color: Color.yellow)
                 statCard(value: "\(pooCount)", label: "💩 Poo", color: Color(hex: "#c87941"))
             }
-            .padding(.horizontal, 14)
 
-            // Timeline chart fills all remaining space
+            // Timeline
             DiaperTimeline(byDate: byDate)
-                .padding(.top, 10)
+                .padding(.top, 12)
                 .padding(.bottom, 10)
                 .frame(maxHeight: .infinity)
         }
@@ -466,89 +423,81 @@ private struct DiaperTrends: View {
                 .font(.outfit(22, weight: .bold))
                 .foregroundColor(color)
             Text(label.uppercased())
-                .font(.outfit(8, weight: .semibold))
-                .tracking(1.5)
-                .foregroundColor(Color.dim)
+                .appFont(.caption2)
+                .tracking(1.0)
+                .foregroundColor(Color.secondaryLabel)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 14)
         .padding(.horizontal, 6)
-        .background(Color.card2)
+        .background(Color.overlayBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(color.opacity(0.25), lineWidth: 1)
-                .overlay(alignment: .top) {
-                    Rectangle().fill(color).frame(height: 2)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                }
-        )
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(color.opacity(0.25), lineWidth: 1))
     }
 }
 
 // MARK: - Diaper timeline
 
-/// 24-hour scatter timeline matching the web app.
-/// Y axis: bottom = midnight (start of day), top = midnight (end of day).
-/// Each day is a vertical column; each diaper event is a colored band at its time-of-day position.
 private struct DiaperTimeline: View {
     let byDate: [(key: String, entries: [DiaperEntry])]
 
-    private let yAxisW: CGFloat = 26
-    private let labelH: CGFloat = 22
-    private let colGap: CGFloat = 3
-    private let minColW: CGFloat = 24
-    private let barH: CGFloat = 14
+    private let labelH: CGFloat = 24
+    private let colGap: CGFloat = 4
+    private let minColW: CGFloat = 28
+    private let dotSize: CGFloat = 18
 
-    // Y axis labels: position from top → time of day
-    // top:0% = midnight end, top:25% = 6pm, top:50% = noon, top:75% = 6am, top:100% = midnight start
-    private let yLabels = ["12a", "6p", "12p", "6a", "12a"]
+    private let yLabels: [(label: String, frac: CGFloat)] = [
+        ("12a", 0.0), ("6a", 0.25), ("12p", 0.5), ("6p", 0.75), ("12a", 1.0)
+    ]
 
     var body: some View {
         GeometryReader { geo in
             let chartH = max(0, geo.size.height - labelH)
-            let availW  = max(0, geo.size.width - yAxisW - 8)
+            let availW  = geo.size.width
             let colW    = byDate.isEmpty ? minColW
                 : max(minColW, (availW - CGFloat(byDate.count - 1) * colGap) / CGFloat(byDate.count))
 
-            HStack(alignment: .top, spacing: 0) {
-                // ── Y axis ──
-                ZStack(alignment: .topLeading) {
-                    ForEach(Array(yLabels.enumerated()), id: \.offset) { i, label in
-                        Text(label)
-                            .font(.system(size: 7, weight: .medium))
-                            .foregroundColor(Color.dim)
-                            .frame(width: yAxisW, alignment: .trailing)
-                            .offset(y: chartH * CGFloat(i) / 4 - 5)
-                    }
-                }
-                .frame(width: yAxisW, height: chartH)
-                .padding(.trailing, 2)
-
+            ZStack(alignment: .topLeading) {
                 if byDate.isEmpty {
                     Text("No data")
                         .font(.outfit(12))
-                        .foregroundColor(Color.dim2)
+                        .foregroundColor(Color.tertiaryLabel)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    // ── Scrollable day columns ──
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(alignment: .top, spacing: colGap) {
-                            ForEach(byDate, id: \.key) { item in
-                                VStack(spacing: 0) {
-                                    DayColumn(entries: item.entries, height: chartH, barH: barH)
-                                        .frame(width: colW, height: chartH)
-                                    dayLabel(item.key)
-                                        .frame(width: colW, height: labelH)
+                    VStack(spacing: 0) {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(alignment: .top, spacing: colGap) {
+                                ForEach(byDate, id: \.key) { item in
+                                    VStack(spacing: 0) {
+                                        DayColumn(entries: item.entries, height: chartH, dotSize: dotSize)
+                                            .frame(width: colW, height: chartH)
+                                        dayLabel(item.key)
+                                            .frame(width: colW, height: labelH)
+                                    }
                                 }
                             }
+                            .padding(.horizontal, 4)
                         }
-                        .padding(.horizontal, 4)
+                        .frame(height: chartH)
+                        Spacer().frame(height: labelH)
                     }
                 }
+
+                // Y labels overlaid at leading edge, non-interactive
+                ZStack(alignment: .topLeading) {
+                    ForEach(yLabels, id: \.frac) { item in
+                        Text(item.label)
+                            .font(.system(size: 7, weight: .regular, design: .monospaced))
+                            .foregroundColor(Color.secondaryLabel.opacity(0.3))
+                            .offset(x: 6, y: chartH * item.frac - 5)
+                    }
+                }
+                .frame(height: chartH)
+                .allowsHitTesting(false)
             }
+            .frame(width: geo.size.width, height: geo.size.height)
+            .clipped()
         }
-        .padding(.horizontal, 14)
     }
 
     private func dayLabel(_ key: String) -> some View {
@@ -556,16 +505,19 @@ private struct DiaperTimeline: View {
         let d = df.date(from: key) ?? Date()
         let weekday = ["Su","Mo","Tu","We","Th","Fr","Sa"][Calendar.current.component(.weekday, from: d) - 1]
         let dayNum  = Calendar.current.component(.day, from: d)
-        return VStack(spacing: 1) {
-            Text(weekday)
-                .font(.system(size: 7, weight: .medium))
-                .foregroundColor(Color.dim)
+        return VStack(spacing: 2) {
+            Rectangle()
+                .fill(Color.separator.opacity(0.25))
+                .frame(height: 1)
+            Text(weekday.uppercased())
+                .font(.system(size: 7, weight: .semibold, design: .rounded))
+                .foregroundColor(Color.secondaryLabel.opacity(0.5))
             Text("\(dayNum)")
-                .font(.system(size: 7))
-                .foregroundColor(Color.dim)
+                .font(.system(size: 9, weight: .medium))
+                .foregroundColor(Color.secondaryLabel)
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, 3)
+        .padding(.top, 4)
     }
 }
 
@@ -574,7 +526,7 @@ private struct DiaperTimeline: View {
 private struct DayColumn: View {
     let entries: [DiaperEntry]
     let height: CGFloat
-    let barH: CGFloat
+    let dotSize: CGFloat
 
     private var formatter: DateFormatter {
         let f = DateFormatter()
@@ -583,56 +535,66 @@ private struct DayColumn: View {
         return f
     }
 
-    // Fraction of day (0 = midnight start, 1 = midnight end)
     private func dayFraction(_ dateStr: String) -> CGFloat {
-        let f = formatter
-        guard let d = f.date(from: dateStr) else { return 0.5 }
+        guard let d = formatter.date(from: dateStr) else { return 0.5 }
         let comps = Calendar.current.dateComponents([.hour, .minute], from: d)
-        let mins = (comps.hour ?? 0) * 60 + (comps.minute ?? 0)
-        return CGFloat(mins) / 1440.0
+        let mins = CGFloat((comps.hour ?? 0) * 60 + (comps.minute ?? 0))
+        return mins / 1440.0
     }
 
-    // Short time string: "1:30 PM" → "1:30p"
     private func shortTime(_ dateStr: String) -> String {
-        let f = formatter
-        guard let d = f.date(from: dateStr) else { return "" }
+        guard let d = formatter.date(from: dateStr) else { return "" }
         let out = DateFormatter()
         out.dateFormat = "h:mm"
         return out.string(from: d)
     }
 
-    var body: some View {
-        ZStack(alignment: .bottom) {
-            // Column background
-            RoundedRectangle(cornerRadius: 3)
-                .fill(Color.yellow.opacity(0.07))
+    // Resolve Y positions so bars never overlap — push down when too close
+    private func resolvedPositions() -> [(entry: DiaperEntry, top: CGFloat)] {
+        let gap: CGFloat = 1
+        let sorted = entries.sorted { dayFraction($0.date) < dayFraction($1.date) }
+        var result: [(entry: DiaperEntry, top: CGFloat)] = []
+        var nextTop: CGFloat = -CGFloat.infinity
+        for entry in sorted {
+            let natural = height * dayFraction(entry.date) - dotSize / 2
+            let placed  = max(natural, nextTop)
+            result.append((entry: entry, top: placed))
+            nextTop = placed + dotSize + gap
+        }
+        return result
+    }
 
-            // Horizontal grid lines at 0 / 25 / 50 / 75 / 100% from bottom
+    var body: some View {
+        let positions = resolvedPositions()
+        return ZStack(alignment: .top) {
+            // Column background
+            RoundedRectangle(cornerRadius: 4)
+                .fill(Color.white.opacity(0.03))
+
+            // Hour grid lines at 6-hour intervals
             ForEach([0.0, 0.25, 0.5, 0.75, 1.0], id: \.self) { frac in
                 Rectangle()
-                    .fill(Color.white.opacity(0.05))
+                    .fill(Color.white.opacity(frac == 0.0 || frac == 1.0 ? 0.08 : 0.04))
                     .frame(height: 1)
-                    // offset from bottom: frac * height, then flip to ZStack bottom alignment
-                    .offset(y: -(height * frac))
+                    .offset(y: height * CGFloat(frac))
             }
 
-            // Diaper events — positioned by time of day
-            ForEach(entries) { entry in
-                let frac = dayFraction(entry.date)
-                let isPee = entry.type == "pee"
-                let bg: Color = isPee ? Color.yellow : Color(hex: "#c87941")
-                let textFg: Color = isPee ? Color.black.opacity(0.6) : Color.white.opacity(0.8)
-
-                Text(shortTime(entry.date))
-                    .font(.system(size: 6, weight: .semibold))
-                    .foregroundColor(textFg)
-                    .lineLimit(1)
-                    .padding(.horizontal, 2)
-                    .frame(maxWidth: .infinity, minHeight: barH, maxHeight: barH)
-                    .background(bg.opacity(0.85))
-                    .clipShape(RoundedRectangle(cornerRadius: 3))
-                    // bottom-align: offset from bottom edge by frac * height, minus half bar height
-                    .offset(y: -(height * frac))
+            // Events as full-width bars with centered time label
+            ForEach(positions, id: \.entry.id) { item in
+                let isPee = item.entry.type == "pee"
+                let barColor: Color = isPee ? Color.yellow.opacity(0.85) : Color(hex: "#c87941").opacity(0.9)
+                let textColor: Color = isPee ? Color.black.opacity(0.65) : Color.white.opacity(0.85)
+                ZStack {
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(barColor)
+                    Text(shortTime(item.entry.date))
+                        .font(.system(size: 7, weight: .semibold, design: .monospaced))
+                        .foregroundColor(textColor)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                }
+                .frame(maxWidth: .infinity, minHeight: dotSize, maxHeight: dotSize)
+                .offset(y: item.top)
             }
         }
         .clipped()
