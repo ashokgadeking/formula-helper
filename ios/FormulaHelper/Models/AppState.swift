@@ -15,6 +15,7 @@ struct AppStateResponse: Codable {
     let powder_per_60: Double
     let weight_log: [WeightEntry]
     let diaper_log: [DiaperEntry]
+    let nap_log: [NapEntry]?
 }
 
 struct LogEntry: Codable, Identifiable {
@@ -43,9 +44,20 @@ struct DiaperEntry: Codable, Identifiable {
     var id: String { sk }
 }
 
+struct NapEntry: Codable, Identifiable {
+    let sk: String
+    let date: String
+    let created_by: String
+    let duration_mins: Int?
+
+    var id: String { sk }
+}
+
 struct AppSettings: Codable {
     let countdown_secs: Int
     let ss_timeout_min: Int
+    let preset1_ml: Int?
+    let preset2_ml: Int?
 }
 
 struct WeightEntry: Codable {

@@ -153,10 +153,34 @@ Resources:
             Path: /api/diaper
             Method: POST
             ApiId: !Ref FormulaApi
+        PutDiaper:
+          Type: HttpApi
+          Properties:
+            Path: /api/diaper/{sk}
+            Method: PUT
+            ApiId: !Ref FormulaApi
         DeleteDiaper:
           Type: HttpApi
           Properties:
             Path: /api/diaper/{sk}
+            Method: DELETE
+            ApiId: !Ref FormulaApi
+        PostNap:
+          Type: HttpApi
+          Properties:
+            Path: /api/nap
+            Method: POST
+            ApiId: !Ref FormulaApi
+        PutNap:
+          Type: HttpApi
+          Properties:
+            Path: /api/nap/{sk}
+            Method: PUT
+            ApiId: !Ref FormulaApi
+        DeleteNap:
+          Type: HttpApi
+          Properties:
+            Path: /api/nap/{sk}
             Method: DELETE
             ApiId: !Ref FormulaApi
         AuthListCredentials:

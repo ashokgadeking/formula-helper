@@ -73,10 +73,12 @@ actor APIClient {
         return try await post("/api/log", body: body)
     }
 
-    func updateEntry(sk: String, text: String? = nil, leftover: String? = nil) async throws {
+    func updateEntry(sk: String, text: String? = nil, leftover: String? = nil, ml: Int? = nil, date: String? = nil) async throws {
         var body: [String: Any] = [:]
         if let text { body["text"] = text }
         if let leftover { body["leftover"] = leftover }
+        if let ml { body["ml"] = ml }
+        if let date { body["date"] = date }
         let encoded = encodePathComponent(sk)
         let _: OkResponse = try await put("/api/log/\(encoded)", body: body)
     }
@@ -88,13 +90,42 @@ actor APIClient {
 
     // MARK: - Diaper
 
-    func logDiaper(type: String) async throws {
-        let _: OkResponse = try await post("/api/diaper", body: ["type": type])
+    func logDiaper(type: String, date: String? = nil) async throws {
+        var body: [String: Any] = ["type": type]
+        if let date { body["date"] = date }
+        let _: OkResponse = try await post("/api/diaper", body: body)
     }
 
     func deleteDiaper(sk: String) async throws {
         let encoded = encodePathComponent(sk)
         try await delete("/api/diaper/\(encoded)")
+    }
+
+    func updateDiaper(sk: String, date: String) async throws {
+        let encoded = encodePathComponent(sk)
+        let _: OkResponse = try await put("/api/diaper/\(encoded)", body: ["date": date])
+    }
+
+    // MARK: - Nap
+
+    func logNap(date: String? = nil, durationMins: Int? = nil) async throws {
+        var body: [String: Any] = [:]
+        if let date { body["date"] = date }
+        if let durationMins { body["duration_mins"] = durationMins }
+        let _: OkResponse = try await post("/api/nap", body: body)
+    }
+
+    func deleteNap(sk: String) async throws {
+        let encoded = encodePathComponent(sk)
+        try await delete("/api/nap/\(encoded)")
+    }
+
+    func updateNap(sk: String, date: String? = nil, durationMins: Int? = nil) async throws {
+        var body: [String: Any] = [:]
+        if let date { body["date"] = date }
+        if let durationMins { body["duration_mins"] = durationMins }
+        let encoded = encodePathComponent(sk)
+        let _: OkResponse = try await put("/api/nap/\(encoded)", body: body)
     }
 
     // MARK: - Timer
@@ -107,6 +138,13 @@ actor APIClient {
 
     func saveSettings(countdownSecs: Int) async throws {
         let _: OkResponse = try await post("/api/settings", body: ["countdown_secs": countdownSecs])
+    }
+
+    func savePresets(preset1: Int, preset2: Int) async throws {
+        let _: OkResponse = try await post("/api/settings", body: [
+            "preset1_ml": preset1,
+            "preset2_ml": preset2,
+        ])
     }
 
     // MARK: - User management (ashok only)

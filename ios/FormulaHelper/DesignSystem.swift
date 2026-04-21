@@ -5,10 +5,12 @@ import SwiftUI
 extension Color {
 
     // ── Backgrounds (layered: primary → secondary → elevated → overlay) ──
-    static let primaryBackground  = Color(hex: "#08080f")
-    static let secondaryBackground = Color(hex: "#0e0e1a")
-    static let elevatedBackground  = Color(hex: "#141422")
-    static let overlayBackground   = Color(hex: "#1a1a2e")
+    // Neutral near-black layers — OLED renders these with fewer lit subpixels
+    // than tinted darks, and heavy cards rely on `separator` strokes for lift.
+    static let primaryBackground  = Color.black
+    static let secondaryBackground = Color(hex: "#050505")
+    static let elevatedBackground  = Color(hex: "#0a0a0a")
+    static let overlayBackground   = Color(hex: "#121214")
 
     // ── Labels ──
     static let primaryLabel    = Color(hex: "#ebebf5")
@@ -22,8 +24,9 @@ extension Color {
     static let tertiaryFill  = Color.white.opacity(0.05)
 
     // ── Separators ──
-    static let separator        = Color.white.opacity(0.06)
-    static let opaqueSeparator  = Color.white.opacity(0.10)
+    // Slightly stronger since cards now sit on near-black with minimal fill lift.
+    static let separator        = Color.white.opacity(0.09)
+    static let opaqueSeparator  = Color.white.opacity(0.14)
 
     // ── Accent: Green ──
     static let green       = Color(hex: "#44d66e")

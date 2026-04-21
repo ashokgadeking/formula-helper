@@ -48,7 +48,8 @@ final class CacheManager: @unchecked Sendable {
                     combos:         cached.state.combos,
                     powder_per_60:  cached.state.powder_per_60,
                     weight_log:     cached.state.weight_log,
-                    diaper_log:     cached.state.diaper_log
+                    diaper_log:     cached.state.diaper_log,
+                    nap_log:        cached.state.nap_log
                 ),
                 fetchedAt: cached.fetchedAt
             )

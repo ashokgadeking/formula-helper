@@ -133,6 +133,8 @@ def _get_settings():
     return {
         "countdown_secs": int(item.get("countdown_secs", DEFAULT_COUNTDOWN_SECS)),
         "ss_timeout_min": int(item.get("ss_timeout_min", 2)),
+        "preset1_ml": int(item.get("preset1_ml", 90)),
+        "preset2_ml": int(item.get("preset2_ml", 120)),
     }
 
 
@@ -142,6 +144,8 @@ def _put_settings(settings):
         "SK": "SETTINGS",
         "countdown_secs": settings.get("countdown_secs", DEFAULT_COUNTDOWN_SECS),
         "ss_timeout_min": settings.get("ss_timeout_min", 2),
+        "preset1_ml": settings.get("preset1_ml", 90),
+        "preset2_ml": settings.get("preset2_ml", 120),
     })
 
 
@@ -188,6 +192,34 @@ def _diaper_entry_to_api(item):
         "date": item.get("date", ""),
         "created_by": item.get("created_by", ""),
     }
+
+
+def _get_all_nap_entries():
+    items = []
+    resp = table.query(
+        KeyConditionExpression=Key("PK").eq("NAP_LOG"),
+        ScanIndexForward=True,
+    )
+    items.extend(resp.get("Items", []))
+    while resp.get("LastEvaluatedKey"):
+        resp = table.query(
+            KeyConditionExpression=Key("PK").eq("NAP_LOG"),
+            ScanIndexForward=True,
+            ExclusiveStartKey=resp["LastEvaluatedKey"],
+        )
+        items.extend(resp.get("Items", []))
+    return _decimal_to_native(items)
+
+
+def _nap_entry_to_api(item):
+    out = {
+        "sk": item["SK"],
+        "date": item.get("date", ""),
+        "created_by": item.get("created_by", ""),
+    }
+    if "duration_mins" in item and item.get("duration_mins") is not None:
+        out["duration_mins"] = int(item["duration_mins"])
+    return out
 
 
 def _log_entry_to_api(item):
@@ -754,6 +786,7 @@ def get_state(event):
         "powder_per_60": POWDER_PER_60ML,
         "weight_log": _get_weight_log(),
         "diaper_log": [_diaper_entry_to_api(e) for e in _get_all_diaper_entries()],
+        "nap_log": [_nap_entry_to_api(e) for e in _get_all_nap_entries()],
     })
 
 
@@ -968,6 +1001,107 @@ def delete_diaper(event):
     return _json_response({"ok": True})
 
 
+def put_diaper(event):
+    sk = (event.get("pathParameters") or {}).get("sk", "")
+    if not sk:
+        return _json_response({"ok": False, "error": "missing sk"}, 400)
+    data = _parse_body(event)
+    if "date" not in data:
+        return _json_response({"ok": False, "error": "nothing to update"}, 400)
+    try:
+        table.update_item(
+            Key={"PK": "DIAPER_LOG", "SK": sk},
+            UpdateExpression="SET #d = :date",
+            ExpressionAttributeValues={":date": data["date"]},
+            ExpressionAttributeNames={"#d": "date"},
+            ConditionExpression="attribute_exists(PK)",
+        )
+    except dynamodb.meta.client.exceptions.ConditionalCheckFailedException:
+        return _json_response({"ok": False, "error": "entry not found"}, 404)
+    return _json_response({"ok": True})
+
+
+def post_nap(event):
+    data = _parse_body(event)
+
+    token = _get_session_from_event(event)
+    session = _validate_session(token)
+    if session:
+        user_name = session["user_name"]
+    elif event.get("headers", {}).get("x-api-key") == PI_API_KEY:
+        user_name = "Pi"
+    else:
+        user_name = ""
+
+    now = _now_ct()
+    date_str = data.get("date", "").strip() or now.strftime("%Y-%m-%d %I:%M %p")
+    sk = now.strftime("%Y-%m-%d") + "#" + f"{time.time():.3f}"
+
+    item = {
+        "PK": "NAP_LOG",
+        "SK": sk,
+        "date": date_str,
+        "created_by": user_name,
+    }
+    if data.get("duration_mins") is not None:
+        try:
+            item["duration_mins"] = int(data["duration_mins"])
+        except (ValueError, TypeError):
+            pass
+    table.put_item(Item=item)
+    return _json_response({"ok": True, "sk": sk})
+
+
+def delete_nap(event):
+    sk = (event.get("pathParameters") or {}).get("sk", "")
+    if not sk:
+        return _json_response({"ok": False, "error": "missing sk"}, 400)
+    table.delete_item(Key={"PK": "NAP_LOG", "SK": sk})
+    return _json_response({"ok": True})
+
+
+def put_nap(event):
+    sk = (event.get("pathParameters") or {}).get("sk", "")
+    if not sk:
+        return _json_response({"ok": False, "error": "missing sk"}, 400)
+    data = _parse_body(event)
+
+    parts = []
+    values = {}
+    names = {}
+    if "date" in data:
+        parts.append("#d = :date")
+        values[":date"] = data["date"]
+        names["#d"] = "date"
+    if "duration_mins" in data:
+        if data["duration_mins"] is None:
+            parts.append("duration_mins = :dm")
+            values[":dm"] = None
+        else:
+            try:
+                parts.append("duration_mins = :dm")
+                values[":dm"] = int(data["duration_mins"])
+            except (ValueError, TypeError):
+                return _json_response({"ok": False, "error": "invalid duration_mins"}, 400)
+
+    if not parts:
+        return _json_response({"ok": False, "error": "nothing to update"}, 400)
+
+    try:
+        kwargs = {
+            "Key": {"PK": "NAP_LOG", "SK": sk},
+            "UpdateExpression": "SET " + ", ".join(parts),
+            "ExpressionAttributeValues": values,
+            "ConditionExpression": "attribute_exists(PK)",
+        }
+        if names:
+            kwargs["ExpressionAttributeNames"] = names
+        table.update_item(**kwargs)
+    except dynamodb.meta.client.exceptions.ConditionalCheckFailedException:
+        return _json_response({"ok": False, "error": "entry not found"}, 404)
+    return _json_response({"ok": True})
+
+
 def post_reset_timer(event):
     _restore_state_from_log()
     return _json_response({"ok": True})
@@ -981,6 +1115,10 @@ def post_settings(event):
         settings["countdown_secs"] = int(data["countdown_secs"])
     if "ss_timeout_min" in data:
         settings["ss_timeout_min"] = int(data["ss_timeout_min"])
+    if "preset1_ml" in data:
+        settings["preset1_ml"] = max(10, min(500, int(data["preset1_ml"])))
+    if "preset2_ml" in data:
+        settings["preset2_ml"] = max(10, min(500, int(data["preset2_ml"])))
 
     _put_settings(settings)
     return _json_response({"ok": True, "settings": settings})
@@ -1014,7 +1152,11 @@ PROTECTED_ROUTES = {
     "POST /api/settings": post_settings,
     "POST /api/weight": post_weight,
     "POST /api/diaper": post_diaper,
+    "PUT /api/diaper/{sk}": put_diaper,
     "DELETE /api/diaper/{sk}": delete_diaper,
+    "POST /api/nap": post_nap,
+    "PUT /api/nap/{sk}": put_nap,
+    "DELETE /api/nap/{sk}": delete_nap,
 }
 
 

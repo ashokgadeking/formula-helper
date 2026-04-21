@@ -19,3 +19,8 @@ xcuserdata/
 
 # OS
 .DS_Store
+
+# Local reference material
+*.html
+*_files/
+DESIGN_OVERHAUL.md

@@ -1,5 +1,13 @@
 import SwiftUI
+import UIKit
 @preconcurrency import ActivityKit
+
+enum Haptics {
+    static func tap(_ style: UIImpactFeedbackGenerator.FeedbackStyle = .medium) {
+        let g = UIImpactFeedbackGenerator(style: style)
+        g.impactOccurred()
+    }
+}
 
 // MARK: - Root
 
@@ -73,6 +81,11 @@ final class StateViewModel: ObservableObject {
         catch { errorMessage = error.localizedDescription }
     }
 
+    func logNap() async {
+        do { try await APIClient.shared.logNap(); await refresh() }
+        catch { errorMessage = error.localizedDescription }
+    }
+
     func resetTimer() async {
         do {
             try await APIClient.shared.resetTimer()
@@ -85,16 +98,35 @@ final class StateViewModel: ObservableObject {
     private func syncLiveActivity() async {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
         guard let end = state?.countdown_end, end > Date().timeIntervalSince1970 else {
-            await endLiveActivity(); return
+            // No active bottle — end every outstanding activity, not just the tracked one
+            for a in Activity<FormulaActivityAttributes>.activities {
+                await a.end(nil, dismissalPolicy: .immediate)
+            }
+            liveActivity = nil
+            expiryTask?.cancel(); expiryTask = nil
+            return
         }
+        let endDate = Date(timeIntervalSince1970: end)
+
+        // Reconcile: keep one activity whose countdownEnd matches state, end any stragglers
+        var current: Activity<FormulaActivityAttributes>? = nil
+        for a in Activity<FormulaActivityAttributes>.activities {
+            let matches = a.activityState == .active
+                && abs(a.content.state.countdownEnd.timeIntervalSince(endDate)) < 1
+            if matches && current == nil {
+                current = a
+            } else {
+                await a.end(nil, dismissalPolicy: .immediate)
+            }
+        }
+        liveActivity = current
+
         let secs = Double(state?.settings.countdown_secs ?? 3900)
         let contentState = FormulaActivityAttributes.ContentState(
-            countdownEnd: Date(timeIntervalSince1970: end),
+            countdownEnd: endDate,
             countdownStart: Date(timeIntervalSince1970: end - secs),
             lastMl: state?.mix_log.last?.ml ?? 0
         )
-        let endDate = Date(timeIntervalSince1970: end)
-        // staleDate set 2 min after expiry — expiryTask ends it cleanly before that
         let staleDate = endDate.addingTimeInterval(120)
         if let activity = liveActivity {
             await activity.update(ActivityContent(state: contentState, staleDate: staleDate))
@@ -109,6 +141,20 @@ final class StateViewModel: ObservableObject {
         scheduleActivityExpiry(at: endDate)
     }
 
+    /// Hand dismissal off to iOS so the pill disappears at expiry even if the app is backgrounded/killed.
+    /// After this call the activity can no longer be `update()`d, but the system will auto-dismiss at `endDate`.
+    func scheduleSystemDismissal() async {
+        guard let activity = liveActivity, activity.activityState == .active else { return }
+        let endDate = activity.content.state.countdownEnd
+        guard endDate > Date() else {
+            await activity.end(nil, dismissalPolicy: .immediate)
+            liveActivity = nil
+            return
+        }
+        let content = ActivityContent(state: activity.content.state, staleDate: endDate)
+        await activity.end(content, dismissalPolicy: .after(endDate))
+    }
+
     private func endLiveActivity() async {
         expiryTask?.cancel()
         expiryTask = nil
@@ -116,16 +162,23 @@ final class StateViewModel: ObservableObject {
         liveActivity = nil
     }
 
-    // Called when the app becomes active — sweep any expired activity.
+    // Called when the app becomes active — sweep expired activities and any duplicates.
     func dismissExpiredActivityIfNeeded() async {
-        for activity in Activity<FormulaActivityAttributes>.activities {
-            if activity.content.state.countdownEnd <= Date() {
+        let all = Activity<FormulaActivityAttributes>.activities
+        let stateEnd = (state?.countdown_end).map { Date(timeIntervalSince1970: $0) }
+        var kept: Activity<FormulaActivityAttributes>? = nil
+        for activity in all {
+            let expired = activity.content.state.countdownEnd <= Date()
+            let matchesState = stateEnd.map {
+                abs(activity.content.state.countdownEnd.timeIntervalSince($0)) < 1
+            } ?? false
+            if expired || !matchesState || kept != nil {
                 await activity.end(nil, dismissalPolicy: .immediate)
+            } else {
+                kept = activity
             }
         }
-        if let live = liveActivity, live.content.state.countdownEnd <= Date() {
-            liveActivity = nil
-        }
+        liveActivity = kept
     }
 
     private func scheduleActivityExpiry(at end: Date) {
@@ -185,6 +238,22 @@ final class StateViewModel: ObservableObject {
         guard let last, last.type == type else { return nil }
         let out = DateFormatter(); out.dateFormat = "h:mm a"
         return out.string(from: last.date)
+    }
+
+    var todayNapCount: Int {
+        guard let log = state?.nap_log else { return 0 }
+        let cutoff = Calendar.current.startOfDay(for: Date())
+        let f = diaperDateFormatter
+        return log.filter { f.date(from: $0.date).map { $0 >= cutoff } ?? false }.count
+    }
+
+    var lastNapTime: String? {
+        guard let log = state?.nap_log, !log.isEmpty else { return nil }
+        let f = diaperDateFormatter
+        let last = log.compactMap { f.date(from: $0.date) }.max()
+        guard let last else { return nil }
+        let out = DateFormatter(); out.dateFormat = "h:mm a"
+        return out.string(from: last)
     }
 
     private var diaperDateFormatter: DateFormatter {
@@ -263,6 +332,25 @@ struct RootTabView: View {
     @ObservedObject var vm: StateViewModel
     @Environment(\.scenePhase) private var scenePhase
 
+    init(vm: StateViewModel) {
+        self.vm = vm
+        let appearance = UITabBarAppearance()
+        appearance.configureWithOpaqueBackground()
+        appearance.backgroundColor = .black
+        let selected = UIColor.white
+        let unselected = UIColor(red: 0.25, green: 0.25, blue: 0.27, alpha: 1.0)
+        for item in [appearance.stackedLayoutAppearance, appearance.inlineLayoutAppearance, appearance.compactInlineLayoutAppearance] {
+            item.selected.iconColor = selected
+            item.selected.titleTextAttributes = [.foregroundColor: selected]
+            item.normal.iconColor = unselected
+            item.normal.titleTextAttributes = [.foregroundColor: unselected]
+        }
+        UITabBar.appearance().standardAppearance = appearance
+        UITabBar.appearance().scrollEdgeAppearance = appearance
+        UITabBar.appearance().unselectedItemTintColor = unselected
+        UITabBar.appearance().tintColor = selected
+    }
+
     var body: some View {
         TabView {
             FeedTab(vm: vm)
@@ -276,12 +364,20 @@ struct RootTabView: View {
         }
         .toolbarBackground(Color.primaryBackground.opacity(0.85), for: .tabBar)
         .toolbarBackground(.visible, for: .tabBar)
+        .tint(.white)
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active {
+            switch phase {
+            case .active:
                 Task {
                     await vm.dismissExpiredActivityIfNeeded()
                     await vm.refresh()
                 }
+            case .background:
+                Task { await vm.scheduleSystemDismissal() }
+            case .inactive:
+                break
+            @unknown default:
+                break
             }
         }
     }
@@ -293,11 +389,6 @@ struct FeedTab: View {
     @ObservedObject var vm: StateViewModel
     @State private var showCustom = false
 
-    var presets: [Int] {
-        let raw = vm.state?.combos.map { Int($0[0]) } ?? []
-        return raw.isEmpty ? [90, 100, 120] : raw
-    }
-
     var body: some View {
         ZStack(alignment: .bottomLeading) {
             Color.primaryBackground.ignoresSafeArea()
@@ -305,10 +396,11 @@ struct FeedTab: View {
             VStack(spacing: 16) {
                 HeroCard(vm: vm)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                QuickLogSection(vm: vm, presets: presets, showCustom: $showCustom)
+                QuickLogSection(vm: vm, showCustom: $showCustom)
             }
             .padding(.top, 8)
             .padding(.bottom, 24)
+            .padding(.horizontal, 8)
 
 #if DEBUG
             Button("▶ LA") { Task { await vm.debugStartLiveActivity() } }
@@ -377,7 +469,7 @@ private struct BannerContent: View {
                             .font(.custom("Outfit", size: 72, relativeTo: .largeTitle).bold())
                             .foregroundColor(Color.tertiaryLabel)
                     } else if isExpired {
-                        subLabel("Bottle expired", expired: true)
+                        subLabel("Bottle expired — mixed at \(state.mixed_at_str)", expired: true)
                         Text("DISCARD")
                             .font(.custom("Outfit", size: 52, relativeTo: .largeTitle).bold())
                             .foregroundColor(Color.red)
@@ -424,22 +516,24 @@ private struct BannerContent: View {
 
 struct QuickLogSection: View {
     @ObservedObject var vm: StateViewModel
-    let presets: [Int]
     @Binding var showCustom: Bool
 
     private let pooColor = Color(hex: "#c87941")
 
+    private var preset1: Int { vm.state?.settings.preset1_ml ?? 90 }
+    private var preset2: Int { vm.state?.settings.preset2_ml ?? 120 }
+
     var body: some View {
         VStack(spacing: 8) {
             HStack(spacing: 8) {
-                ForEach(presets, id: \.self) { ml in
-                    FormulaCard(ml: ml) { Task { await vm.startFeeding(ml: ml) } }
-                }
+                FormulaCard(ml: preset1) { Task { await vm.startFeeding(ml: preset1) } }
+                FormulaCard(ml: preset2) { Task { await vm.startFeeding(ml: preset2) } }
+                CustomFormulaCard { showCustom = true }
             }
 
             HStack(spacing: 8) {
                 DiaperCard(
-                    symbol: "drop.fill",
+                    symbol: nil,
                     label: "PEE",
                     count: vm.todayDiaperCounts.pee,
                     lastTime: vm.lastDiaperTime(type: "pee"),
@@ -449,7 +543,7 @@ struct QuickLogSection: View {
                 ) { Task { await vm.logDiaper(type: "pee") } }
 
                 DiaperCard(
-                    symbol: "circle.fill",
+                    symbol: nil,
                     label: "POO",
                     count: vm.todayDiaperCounts.poo,
                     lastTime: vm.lastDiaperTime(type: "poo"),
@@ -457,10 +551,46 @@ struct QuickLogSection: View {
                     bg: pooColor.opacity(0.08),
                     border: pooColor.opacity(0.20)
                 ) { Task { await vm.logDiaper(type: "poo") } }
-            }
 
-            CustomAmountCard { showCustom = true }
+                DiaperCard(
+                    symbol: nil,
+                    label: "NAP",
+                    count: vm.todayNapCount,
+                    lastTime: vm.lastNapTime,
+                    fg: Color.purple,
+                    bg: Color.purpleFill,
+                    border: Color.purpleBorder
+                ) { Task { await vm.logNap() } }
+            }
         }
+    }
+}
+
+struct CustomFormulaCard: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: { Haptics.tap(); action() }) {
+            VStack(spacing: 0) {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundColor(Color.green)
+                Text("CUSTOM")
+                    .appFont(.caption2)
+                    .tracking(1.5)
+                    .foregroundColor(Color.green.opacity(0.55))
+                    .padding(.top, 6)
+            }
+            .frame(maxWidth: .infinity, minHeight: 80)
+            .background(Color.green.opacity(0.08))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(Color.greenBorder, lineWidth: 1)
+            )
+        }
+        .buttonStyle(ScaledButtonStyle())
+        .accessibilityLabel("Log custom amount")
     }
 }
 
@@ -469,7 +599,7 @@ struct FormulaCard: View {
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
+        Button(action: { Haptics.tap(); action() }) {
             VStack(spacing: 0) {
                 Text("\(ml)")
                     .font(.custom("Outfit", size: 32, relativeTo: .title).bold())
@@ -495,7 +625,7 @@ struct FormulaCard: View {
 }
 
 struct DiaperCard: View {
-    let symbol: String
+    let symbol: String?
     let label: String
     let count: Int
     let lastTime: String?
@@ -505,36 +635,29 @@ struct DiaperCard: View {
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .center, spacing: 8) {
-                    Image(systemName: symbol)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(fg)
+        Button(action: { Haptics.tap(); action() }) {
+            ZStack(alignment: .bottomLeading) {
+                VStack(alignment: .center, spacing: 6) {
                     Text(label)
                         .appFont(.headline)
                         .tracking(0.5)
                         .foregroundColor(fg)
-                    Spacer(minLength: 4)
-                    if count > 0 {
-                        Text("×\(count)")
-                            .appFont(.footnote)
-                            .foregroundColor(fg.opacity(0.6))
+                    if let ts = lastTime {
+                        Text("LAST \(ts.uppercased())")
+                            .appFont(.caption2)
+                            .tracking(1.2)
+                            .foregroundColor(fg.opacity(0.45))
+                    } else {
+                        Text(" ")
+                            .appFont(.caption2)
                     }
                 }
-                if let ts = lastTime {
-                    Text("LAST \(ts.uppercased())")
-                        .appFont(.caption2)
-                        .tracking(1.2)
-                        .foregroundColor(fg.opacity(0.45))
-                } else {
-                    Text(" ")
-                        .appFont(.caption2)
-                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 14)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 14)
-            .frame(maxWidth: .infinity, minHeight: 80, alignment: .leading)
+            .frame(maxWidth: .infinity)
+            .frame(height: 80)
             .background(bg)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(
@@ -544,32 +667,6 @@ struct DiaperCard: View {
         }
         .buttonStyle(ScaledButtonStyle())
         .accessibilityLabel("Log \(label.lowercased()) diaper")
-    }
-}
-
-struct CustomAmountCard: View {
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                Image(systemName: "slider.horizontal.3")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(Color.purple)
-                Text("Custom Amount")
-                    .appFont(.headline)
-                    .foregroundColor(Color.purple)
-            }
-            .frame(maxWidth: .infinity, minHeight: 48)
-            .background(Color.purpleFill)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(Color.purpleBorder, lineWidth: 1)
-            )
-        }
-        .buttonStyle(ScaledButtonStyle())
-        .accessibilityLabel("Log custom amount")
     }
 }
 

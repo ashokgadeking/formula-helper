@@ -5,7 +5,7 @@ import SwiftUI
 struct SettingsView: View {
     @ObservedObject var vm: StateViewModel
     @EnvironmentObject var auth: AuthManager
-    @StateObject private var users = UserStore()
+    @EnvironmentObject var users: UserStore
     @State private var showInvite = false
     @State private var showResetConfirm = false
 
@@ -18,6 +18,7 @@ struct SettingsView: View {
 
                 List {
                     timerSection
+                    presetsSection
                     if isAdmin { usersSection }
                     aboutSection
                 }
@@ -87,6 +88,30 @@ struct SettingsView: View {
     private var timerMinutes: Int {
         (vm.state?.settings.countdown_secs ?? 3900) / 60
     }
+
+    // MARK: Presets section
+
+    @ViewBuilder
+    private var presetsSection: some View {
+        Section {
+            NavigationLink {
+                PresetsDetailView(vm: vm)
+            } label: {
+                SettingsRow(
+                    icon: "square.grid.2x2.fill",
+                    tint: .blue,
+                    title: "Quick Amounts",
+                    trailing: "\(preset1) · \(preset2) ml"
+                )
+            }
+            .listRowBackground(Color.elevatedBackground)
+        } header: {
+            Text("Presets").foregroundColor(Color.secondaryLabel)
+        }
+    }
+
+    private var preset1: Int { vm.state?.settings.preset1_ml ?? 90 }
+    private var preset2: Int { vm.state?.settings.preset2_ml ?? 120 }
 
     private var hasActiveBottle: Bool {
         guard let end = vm.state?.countdown_end else { return false }
@@ -184,6 +209,8 @@ struct SettingsView: View {
 
 @MainActor
 final class UserStore: ObservableObject {
+    static let shared = UserStore()
+
     struct User: Identifiable {
         let name: String
         let credentials: [APIClient.Credential]
@@ -193,10 +220,11 @@ final class UserStore: ObservableObject {
     }
 
     @Published var users: [User] = []
-    @Published var loading = true
+    @Published var loading = false
+    private var hasLoaded = false
 
     func load() async {
-        loading = true
+        if !hasLoaded { loading = true }
         async let u = try? APIClient.shared.listAllowedUsers()
         async let c = try? APIClient.shared.listCredentials()
         let allowed = await u ?? []
@@ -206,6 +234,7 @@ final class UserStore: ObservableObject {
         users = names.sorted().map { name in
             User(name: name, credentials: grouped[name] ?? [], isAdmin: name == "ashok")
         }
+        hasLoaded = true
         loading = false
     }
 
@@ -394,6 +423,87 @@ struct TimerDetailView: View {
     private func save() async {
         saving = true
         try? await APIClient.shared.saveSettings(countdownSecs: Int(mins) * 60)
+        await vm.refresh()
+        saving = false
+    }
+}
+
+// MARK: - Presets detail
+
+struct PresetsDetailView: View {
+    @ObservedObject var vm: StateViewModel
+    @State private var preset1: Double
+    @State private var preset2: Double
+    @State private var saving = false
+
+    init(vm: StateViewModel) {
+        self.vm = vm
+        _preset1 = State(initialValue: Double(vm.state?.settings.preset1_ml ?? 90))
+        _preset2 = State(initialValue: Double(vm.state?.settings.preset2_ml ?? 120))
+    }
+
+    var body: some View {
+        ZStack {
+            Color.primaryBackground.ignoresSafeArea()
+
+            List {
+                presetSection(
+                    title: "First Button",
+                    value: $preset1,
+                    tint: Color.blue
+                )
+                presetSection(
+                    title: "Second Button",
+                    value: $preset2,
+                    tint: Color.blue
+                )
+            }
+            .listStyle(.insetGrouped)
+            .scrollContentBackground(.hidden)
+        }
+        .navigationTitle("Quick Amounts")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    @ViewBuilder
+    private func presetSection(title: String, value: Binding<Double>, tint: Color) -> some View {
+        Section {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("\(Int(value.wrappedValue))")
+                        .font(.custom("Outfit", size: 48, relativeTo: .largeTitle).bold())
+                        .foregroundColor(tint)
+                        .monospacedDigit()
+                    Text("ml")
+                        .appFont(.title3)
+                        .foregroundColor(Color.secondaryLabel)
+                    Spacer()
+                    if saving {
+                        ProgressView().tint(Color.secondaryLabel).scaleEffect(0.8)
+                    }
+                }
+                Slider(value: value, in: 30...240, step: 5) { editing in
+                    if !editing { Task { await save() } }
+                }
+                .tint(tint)
+                HStack {
+                    Text("30 ml")
+                    Spacer()
+                    Text("240 ml")
+                }
+                .appFont(.caption1)
+                .foregroundColor(Color.tertiaryLabel)
+            }
+            .padding(.vertical, 6)
+            .listRowBackground(Color.elevatedBackground)
+        } header: {
+            Text(title).foregroundColor(Color.secondaryLabel)
+        }
+    }
+
+    private func save() async {
+        saving = true
+        try? await APIClient.shared.savePresets(preset1: Int(preset1), preset2: Int(preset2))
         await vm.refresh()
         saving = false
     }
