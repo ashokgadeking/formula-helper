@@ -1,86 +1,85 @@
 """
-Formula Helper — AWS Lambda API handler.
+Formula Helper — DEV auth rewrite (dev_auth branch).
 
-Single Lambda function dispatched by API Gateway HTTP API route keys.
-All state lives in DynamoDB table (env var TABLE_NAME).
+Multi-household model with passkey login + Sign in with Apple as recovery identity.
+Scoped per-household data. Invite-token signup flow.
+
+Routes are dispatched on (method, rawPath) with {param} support.
 """
 
+import base64
 import json
 import os
+import re
+import secrets
 import time
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-# Central Time — use TZ env var for automatic DST handling
-import zoneinfo
-CT = zoneinfo.ZoneInfo("America/Chicago")
-
-def _now_ct():
-    return datetime.now(CT)
-
-import base64
-import secrets
-
 import boto3
 from boto3.dynamodb.conditions import Key
 
+import jwt
+from jwt import PyJWKClient
+
 import webauthn
+from webauthn.helpers import bytes_to_base64url, base64url_to_bytes
 from webauthn.helpers.structs import (
     AuthenticatorSelectionCriteria,
+    PublicKeyCredentialDescriptor,
     ResidentKeyRequirement,
     UserVerificationRequirement,
-    AuthenticatorAttachment,
-    PublicKeyCredentialDescriptor,
 )
-from webauthn.helpers import bytes_to_base64url, base64url_to_bytes
 
-# ── Constants ────────────────────────────────────────────────────────────────
-TABLE_NAME = os.environ.get("TABLE_NAME", "FormulaHelper")
-NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "bottle-expiry-1737")
-PI_API_KEY = os.environ.get("PI_API_KEY", "")
-VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY", "")
-VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY", "")
-VAPID_CLAIMS_EMAIL = "mailto:admin@formulahelper.app"
-RP_ID = os.environ.get("RP_ID", "d20oyc88hlibbe.cloudfront.net")
-RP_NAME = "Formula Helper"
-RP_ORIGIN = os.environ.get("RP_ORIGIN", "https://d20oyc88hlibbe.cloudfront.net")
-SESSION_TTL_SECS = 30 * 24 * 3600  # 30 days
-DEFAULT_COUNTDOWN_SECS = 65 * 60  # 65 minutes
+# ── Config ───────────────────────────────────────────────────────────────────
+
+TABLE_NAME = os.environ.get("TABLE_NAME", "FormulaHelper-dev")
+RP_ID = os.environ.get("RP_ID", "")
+RP_NAME = os.environ.get("RP_NAME", "Formula Helper")
+RP_ORIGIN = os.environ.get("RP_ORIGIN", "")
+STAGE = os.environ.get("STAGE", "dev")
+
+# Sign in with Apple
+SIWA_ISSUER = "https://appleid.apple.com"
+SIWA_JWKS_URL = "https://appleid.apple.com/auth/keys"
+SIWA_AUDIENCE = os.environ.get("SIWA_AUDIENCE", "com.ashokteja.formulahelper")
+
+# TTLs
+SESSION_TTL_SECS = 30 * 24 * 3600
+CHALLENGE_TTL_SECS = 5 * 60
+INVITE_TTL_SECS = 7 * 24 * 3600
+
+# Defaults for new households
+DEFAULT_COUNTDOWN_SECS = 65 * 60
+DEFAULT_PRESET1 = 90
+DEFAULT_PRESET2 = 120
 
 POWDER_PER_60ML = 8.3
 COMBOS = [
-    (90,  POWDER_PER_60ML * 90  / 60.0),
+    (90, POWDER_PER_60ML * 90 / 60.0),
     (100, POWDER_PER_60ML * 100 / 60.0),
     (120, POWDER_PER_60ML * 120 / 60.0),
 ]
 
-dynamodb = boto3.resource("dynamodb")
-table = dynamodb.Table(TABLE_NAME)
+# ── Globals ──────────────────────────────────────────────────────────────────
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+_dynamodb = boto3.resource("dynamodb")
+table = _dynamodb.Table(TABLE_NAME)
+_jwk_client = PyJWKClient(SIWA_JWKS_URL, cache_keys=True, lifespan=3600)
 
-def _json_response(body, status=200):
-    return {
-        "statusCode": status,
-        "headers": {
-            "Content-Type": "application/json",
-            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-        },
-        "body": json.dumps(body, default=str),
-    }
+# ── Small utilities ──────────────────────────────────────────────────────────
 
+def _now() -> int:
+    return int(time.time())
 
-def _parse_body(event):
-    body = event.get("body", "{}")
-    if event.get("isBase64Encoded"):
-        import base64
-        body = base64.b64decode(body).decode()
-    return json.loads(body) if body else {}
+def _iso_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
+def _new_id(prefix: str = "") -> str:
+    return f"{prefix}{secrets.token_urlsafe(16)}"
 
 def _decimal_to_native(obj):
-    """Recursively convert Decimal values from DynamoDB to int/float."""
     if isinstance(obj, Decimal):
         return int(obj) if obj == int(obj) else float(obj)
     if isinstance(obj, dict):
@@ -89,10 +88,691 @@ def _decimal_to_native(obj):
         return [_decimal_to_native(i) for i in obj]
     return obj
 
+def _parse_body(event: dict) -> dict:
+    body = event.get("body") or ""
+    if event.get("isBase64Encoded"):
+        body = base64.b64decode(body).decode()
+    return json.loads(body) if body else {}
 
-def _get_timer_state():
-    resp = table.get_item(Key={"PK": "STATE", "SK": "TIMER"})
-    item = resp.get("Item", {})
+def _json(body, status=200, cookies=None):
+    resp = {
+        "statusCode": status,
+        "headers": {
+            "Content-Type": "application/json",
+            "Cache-Control": "no-store",
+        },
+        "body": json.dumps(body, default=str),
+    }
+    if cookies:
+        resp["cookies"] = cookies
+    return resp
+
+def _session_cookie(token: str, max_age: int = SESSION_TTL_SECS) -> str:
+    return f"session={token}; Path=/; Max-Age={max_age}; SameSite=Lax; Secure; HttpOnly"
+
+def _clear_session_cookie() -> str:
+    return "session=; Path=/; Max-Age=0; SameSite=Lax; Secure; HttpOnly"
+
+# ── Session / auth context ───────────────────────────────────────────────────
+
+def _session_token_from_event(event: dict) -> str | None:
+    for c in event.get("cookies", []) or []:
+        if c.startswith("session="):
+            return c.split("=", 1)[1]
+    return None
+
+def _load_session(token: str | None) -> dict | None:
+    if not token:
+        return None
+    item = table.get_item(Key={"PK": f"SESS#{token}", "SK": "META"}).get("Item")
+    if not item or item.get("expires", 0) < _now():
+        return None
+    return _decimal_to_native(item)
+
+def _create_session(user_id: str, active_hh: str | None) -> tuple[str, int]:
+    token = _new_id()
+    expires = _now() + SESSION_TTL_SECS
+    table.put_item(Item={
+        "PK": f"SESS#{token}",
+        "SK": "META",
+        "user_id": user_id,
+        "active_hh": active_hh or "",
+        "expires": expires,
+        "ttl": expires + 24 * 3600,  # DynamoDB TTL sweeps after grace period
+    })
+    return token, expires
+
+def _delete_session(token: str):
+    table.delete_item(Key={"PK": f"SESS#{token}", "SK": "META"})
+
+def _require_session(event: dict):
+    """Returns session dict or an error response."""
+    token = _session_token_from_event(event)
+    s = _load_session(token)
+    if not s:
+        return None, _json({"error": "Unauthorized"}, 401)
+    return s, None
+
+def _require_member(session: dict, hh_id: str):
+    """Verify session.user_id is a member of hh_id. Returns (member_item, error_response)."""
+    item = table.get_item(Key={"PK": f"HH#{hh_id}", "SK": f"MEMBER#{session['user_id']}"}).get("Item")
+    if not item:
+        return None, _json({"error": "Forbidden"}, 403)
+    return _decimal_to_native(item), None
+
+# ── Challenges (per-session, short-lived) ────────────────────────────────────
+
+def _put_challenge(challenge_b64: str, purpose: str, extra: dict | None = None) -> str:
+    cid = _new_id("c_")
+    item = {
+        "PK": f"CHAL#{cid}",
+        "SK": purpose,
+        "challenge": challenge_b64,
+        "purpose": purpose,
+        "expires": _now() + CHALLENGE_TTL_SECS,
+        "ttl": _now() + CHALLENGE_TTL_SECS + 60,
+    }
+    if extra:
+        item.update(extra)
+    table.put_item(Item=item)
+    return cid
+
+def _pop_challenge(cid: str, purpose: str) -> dict | None:
+    item = table.get_item(Key={"PK": f"CHAL#{cid}", "SK": purpose}).get("Item")
+    if not item:
+        return None
+    # One-shot — delete immediately
+    table.delete_item(Key={"PK": f"CHAL#{cid}", "SK": purpose})
+    if item.get("expires", 0) < _now():
+        return None
+    return _decimal_to_native(item)
+
+# ── Sign in with Apple ───────────────────────────────────────────────────────
+
+def _verify_siwa(id_token: str) -> dict:
+    """Verify Apple identity token. Returns claims dict on success, raises on failure."""
+    signing_key = _jwk_client.get_signing_key_from_jwt(id_token)
+    claims = jwt.decode(
+        id_token,
+        signing_key.key,
+        algorithms=["RS256"],
+        audience=SIWA_AUDIENCE,
+        issuer=SIWA_ISSUER,
+    )
+    if not claims.get("sub"):
+        raise ValueError("SIWA token missing sub")
+    return claims
+
+# ── Users / credentials / apple_sub lookup ───────────────────────────────────
+
+def _put_user(user_id: str, apple_sub: str, name: str, email: str | None = None):
+    table.put_item(Item={
+        "PK": f"USER#{user_id}",
+        "SK": "PROFILE",
+        "user_id": user_id,
+        "apple_sub": apple_sub,
+        "name": name,
+        "email": email or "",
+        "created_at": _iso_now(),
+    })
+    # Reverse lookup for recovery
+    table.put_item(Item={
+        "PK": f"APPLESUB#{apple_sub}",
+        "SK": "LOOKUP",
+        "user_id": user_id,
+    })
+
+def _get_user(user_id: str) -> dict | None:
+    item = table.get_item(Key={"PK": f"USER#{user_id}", "SK": "PROFILE"}).get("Item")
+    return _decimal_to_native(item) if item else None
+
+def _user_id_for_apple_sub(apple_sub: str) -> str | None:
+    item = table.get_item(Key={"PK": f"APPLESUB#{apple_sub}", "SK": "LOOKUP"}).get("Item")
+    return item.get("user_id") if item else None
+
+def _put_credential(cred_id_b64: str, user_id: str, public_key: bytes, sign_count: int, label: str = ""):
+    table.put_item(Item={
+        "PK": f"CRED#{cred_id_b64}",
+        "SK": "CRED",
+        "credential_id": cred_id_b64,
+        "user_id": user_id,
+        "public_key": bytes_to_base64url(public_key),
+        "sign_count": sign_count,
+        "label": label,
+        "created_at": _iso_now(),
+    })
+
+def _get_credential(cred_id_b64: str) -> dict | None:
+    item = table.get_item(Key={"PK": f"CRED#{cred_id_b64}", "SK": "CRED"}).get("Item")
+    return _decimal_to_native(item) if item else None
+
+def _update_sign_count(cred_id_b64: str, new_count: int):
+    table.update_item(
+        Key={"PK": f"CRED#{cred_id_b64}", "SK": "CRED"},
+        UpdateExpression="SET sign_count = :c",
+        ExpressionAttributeValues={":c": new_count},
+    )
+
+def _list_credentials_for_user(user_id: str) -> list[dict]:
+    # Scan-like: in dev volume this is fine. At scale add a GSI on user_id.
+    resp = table.scan(
+        FilterExpression=Key("PK").begins_with("CRED#"),
+    )
+    return [_decimal_to_native(i) for i in resp.get("Items", []) if i.get("user_id") == user_id]
+
+# ── Households / memberships ─────────────────────────────────────────────────
+
+def _create_household(name: str, owner_uid: str) -> str:
+    hh_id = _new_id("h_")
+    now = _iso_now()
+    table.put_item(Item={
+        "PK": f"HH#{hh_id}",
+        "SK": "META",
+        "hh_id": hh_id,
+        "name": name,
+        "owner_uid": owner_uid,
+        "created_at": now,
+    })
+    _add_membership(hh_id, owner_uid, role="owner", hh_name=name)
+    # Default settings
+    table.put_item(Item={
+        "PK": f"HH#{hh_id}",
+        "SK": "SETTINGS",
+        "countdown_secs": DEFAULT_COUNTDOWN_SECS,
+        "preset1_ml": DEFAULT_PRESET1,
+        "preset2_ml": DEFAULT_PRESET2,
+        "ss_timeout_min": 2,
+    })
+    return hh_id
+
+def _get_household(hh_id: str) -> dict | None:
+    item = table.get_item(Key={"PK": f"HH#{hh_id}", "SK": "META"}).get("Item")
+    return _decimal_to_native(item) if item else None
+
+def _add_membership(hh_id: str, user_id: str, role: str = "member", hh_name: str = ""):
+    now = _iso_now()
+    # Forward: USER#<uid> → HH#<hid>
+    table.put_item(Item={
+        "PK": f"USER#{user_id}",
+        "SK": f"HH#{hh_id}",
+        "hh_id": hh_id,
+        "hh_name": hh_name,
+        "role": role,
+        "joined_at": now,
+    })
+    # Mirror: HH#<hid> → MEMBER#<uid>
+    table.put_item(Item={
+        "PK": f"HH#{hh_id}",
+        "SK": f"MEMBER#{user_id}",
+        "user_id": user_id,
+        "role": role,
+        "joined_at": now,
+    })
+
+def _list_memberships(user_id: str) -> list[dict]:
+    resp = table.query(
+        KeyConditionExpression=Key("PK").eq(f"USER#{user_id}") & Key("SK").begins_with("HH#"),
+    )
+    return [_decimal_to_native(i) for i in resp.get("Items", [])]
+
+def _list_members(hh_id: str) -> list[dict]:
+    resp = table.query(
+        KeyConditionExpression=Key("PK").eq(f"HH#{hh_id}") & Key("SK").begins_with("MEMBER#"),
+    )
+    return [_decimal_to_native(i) for i in resp.get("Items", [])]
+
+# ── Invites ──────────────────────────────────────────────────────────────────
+
+def _create_invite(hh_id: str, hh_name: str, inviter_uid: str) -> dict:
+    token = _new_id()
+    expires = _now() + INVITE_TTL_SECS
+    item = {
+        "PK": f"INVITE#{token}",
+        "SK": "META",
+        "token": token,
+        "hh_id": hh_id,
+        "hh_name": hh_name,
+        "inviter_uid": inviter_uid,
+        "created_at": _iso_now(),
+        "expires": expires,
+        "ttl": expires + 24 * 3600,
+        "used_at": "",
+    }
+    table.put_item(Item=item)
+    return _decimal_to_native(item)
+
+def _get_invite(token: str) -> dict | None:
+    item = table.get_item(Key={"PK": f"INVITE#{token}", "SK": "META"}).get("Item")
+    return _decimal_to_native(item) if item else None
+
+def _consume_invite(token: str) -> dict | None:
+    """Atomically mark invite used. Returns the invite dict, or None if already used / expired."""
+    try:
+        resp = table.update_item(
+            Key={"PK": f"INVITE#{token}", "SK": "META"},
+            UpdateExpression="SET used_at = :now",
+            ConditionExpression="attribute_exists(PK) AND used_at = :empty AND expires > :t",
+            ExpressionAttributeValues={":now": _iso_now(), ":empty": "", ":t": _now()},
+            ReturnValues="ALL_NEW",
+        )
+        return _decimal_to_native(resp.get("Attributes"))
+    except _dynamodb.meta.client.exceptions.ConditionalCheckFailedException:
+        return None
+
+# ── Auth handlers ────────────────────────────────────────────────────────────
+
+def auth_status(event):
+    token = _session_token_from_event(event)
+    session = _load_session(token)
+    if not session:
+        return _json({"authenticated": False})
+    user = _get_user(session["user_id"])
+    return _json({
+        "authenticated": True,
+        "user_id": session["user_id"],
+        "user_name": (user or {}).get("name", ""),
+        "active_hh": session.get("active_hh", ""),
+    })
+
+def auth_register_start(event):
+    """
+    Begin signup. Two flavors:
+      - With invite_token: SIWA required; will join existing household.
+      - Without invite_token: SIWA required; will create a new household.
+    Body: { siwa_id_token: str, invite_token?: str, household_name?: str, user_name: str }
+    Returns passkey registration options + challenge_id.
+    """
+    data = _parse_body(event)
+    siwa_token = data.get("siwa_id_token") or ""
+    user_name = (data.get("user_name") or "").strip()
+    invite_token = data.get("invite_token") or ""
+    household_name = (data.get("household_name") or "").strip()
+
+    if not siwa_token or not user_name:
+        return _json({"error": "siwa_id_token and user_name required"}, 400)
+
+    try:
+        claims = _verify_siwa(siwa_token)
+    except Exception as e:
+        return _json({"error": f"SIWA verification failed: {e}"}, 400)
+
+    apple_sub = claims["sub"]
+    email = claims.get("email")
+
+    # Reject if this apple_sub already has a user (use login instead)
+    if _user_id_for_apple_sub(apple_sub):
+        return _json({"error": "Account already exists for this Apple ID. Sign in instead."}, 409)
+
+    # Invite path: validate invite up front so we fail fast
+    invite = None
+    if invite_token:
+        invite = _get_invite(invite_token)
+        if not invite or invite.get("used_at") or invite.get("expires", 0) < _now():
+            return _json({"error": "Invite is invalid or expired"}, 400)
+    elif not household_name:
+        return _json({"error": "household_name required when no invite_token"}, 400)
+
+    # Pre-mint user_id so we can bind the future credential to it
+    user_id = _new_id("u_")
+
+    options = webauthn.generate_registration_options(
+        rp_id=RP_ID,
+        rp_name=RP_NAME,
+        user_id=user_id.encode(),
+        user_name=user_name,
+        user_display_name=user_name,
+        authenticator_selection=AuthenticatorSelectionCriteria(
+            resident_key=ResidentKeyRequirement.PREFERRED,
+            user_verification=UserVerificationRequirement.PREFERRED,
+        ),
+    )
+
+    challenge_b64 = bytes_to_base64url(options.challenge)
+    cid = _put_challenge(
+        challenge_b64,
+        purpose="register",
+        extra={
+            "user_id": user_id,
+            "apple_sub": apple_sub,
+            "email": email or "",
+            "user_name": user_name,
+            "invite_token": invite_token,
+            "household_name": household_name,
+        },
+    )
+
+    return _json({
+        "challenge_id": cid,
+        "options": json.loads(webauthn.options_to_json(options)),
+    })
+
+def auth_register_finish(event):
+    """Body: { challenge_id, credential: <WebAuthn attestation response> }"""
+    data = _parse_body(event)
+    cid = data.get("challenge_id") or ""
+    credential = data.get("credential") or {}
+
+    ctx = _pop_challenge(cid, "register")
+    if not ctx:
+        return _json({"error": "Challenge expired or invalid"}, 400)
+
+    try:
+        verification = webauthn.verify_registration_response(
+            credential=credential,
+            expected_challenge=base64url_to_bytes(ctx["challenge"]),
+            expected_rp_id=RP_ID,
+            expected_origin=RP_ORIGIN,
+        )
+    except Exception as e:
+        return _json({"error": str(e)}, 400)
+
+    user_id = ctx["user_id"]
+    apple_sub = ctx["apple_sub"]
+    user_name = ctx["user_name"]
+    invite_token = ctx.get("invite_token") or ""
+    household_name = ctx.get("household_name") or ""
+
+    # Create USER
+    _put_user(user_id, apple_sub=apple_sub, name=user_name, email=ctx.get("email"))
+
+    # Store credential
+    cred_id_b64 = bytes_to_base64url(verification.credential_id)
+    _put_credential(
+        cred_id_b64,
+        user_id=user_id,
+        public_key=verification.credential_public_key,
+        sign_count=verification.sign_count,
+        label="primary",
+    )
+
+    # Household: invite → join, else create
+    if invite_token:
+        invite = _consume_invite(invite_token)
+        if not invite:
+            return _json({"error": "Invite was consumed or expired"}, 400)
+        hh_id = invite["hh_id"]
+        hh_name = invite.get("hh_name", "")
+        _add_membership(hh_id, user_id, role="member", hh_name=hh_name)
+    else:
+        hh_id = _create_household(household_name, owner_uid=user_id)
+
+    token, _ = _create_session(user_id, active_hh=hh_id)
+    return _json(
+        {"ok": True, "user_id": user_id, "active_hh": hh_id},
+        cookies=[_session_cookie(token)],
+    )
+
+def auth_login_options(event):
+    options = webauthn.generate_authentication_options(
+        rp_id=RP_ID,
+        user_verification=UserVerificationRequirement.PREFERRED,
+    )
+    challenge_b64 = bytes_to_base64url(options.challenge)
+    cid = _put_challenge(challenge_b64, purpose="login")
+    return _json({
+        "challenge_id": cid,
+        "options": json.loads(webauthn.options_to_json(options)),
+    })
+
+def auth_login_verify(event):
+    data = _parse_body(event)
+    cid = data.get("challenge_id") or ""
+    credential = data.get("credential") or {}
+
+    ctx = _pop_challenge(cid, "login")
+    if not ctx:
+        return _json({"error": "Challenge expired or invalid"}, 400)
+
+    cred_id_b64 = credential.get("id", "")
+    cred = _get_credential(cred_id_b64)
+    if not cred:
+        return _json({"error": "Unknown credential"}, 400)
+
+    try:
+        verification = webauthn.verify_authentication_response(
+            credential=credential,
+            expected_challenge=base64url_to_bytes(ctx["challenge"]),
+            expected_rp_id=RP_ID,
+            expected_origin=RP_ORIGIN,
+            credential_public_key=base64url_to_bytes(cred["public_key"]),
+            credential_current_sign_count=int(cred.get("sign_count", 0)),
+        )
+    except Exception as e:
+        return _json({"error": str(e)}, 400)
+
+    _update_sign_count(cred_id_b64, verification.new_sign_count)
+
+    user_id = cred["user_id"]
+    # Pick active_hh: first membership (client can switch via /households/switch)
+    memberships = _list_memberships(user_id)
+    active_hh = memberships[0]["hh_id"] if memberships else None
+
+    token, _ = _create_session(user_id, active_hh=active_hh)
+    return _json(
+        {"ok": True, "user_id": user_id, "active_hh": active_hh},
+        cookies=[_session_cookie(token)],
+    )
+
+def auth_recover_start(event):
+    """SIWA-based recovery. Body: { siwa_id_token }. Returns registration options to add a new passkey to the existing user."""
+    data = _parse_body(event)
+    siwa_token = data.get("siwa_id_token") or ""
+    if not siwa_token:
+        return _json({"error": "siwa_id_token required"}, 400)
+
+    try:
+        claims = _verify_siwa(siwa_token)
+    except Exception as e:
+        return _json({"error": f"SIWA verification failed: {e}"}, 400)
+
+    user_id = _user_id_for_apple_sub(claims["sub"])
+    if not user_id:
+        return _json({"error": "No account associated with this Apple ID"}, 404)
+
+    user = _get_user(user_id) or {}
+    options = webauthn.generate_registration_options(
+        rp_id=RP_ID,
+        rp_name=RP_NAME,
+        user_id=user_id.encode(),
+        user_name=user.get("name", "user"),
+        user_display_name=user.get("name", "user"),
+        authenticator_selection=AuthenticatorSelectionCriteria(
+            resident_key=ResidentKeyRequirement.PREFERRED,
+            user_verification=UserVerificationRequirement.PREFERRED,
+        ),
+    )
+    challenge_b64 = bytes_to_base64url(options.challenge)
+    cid = _put_challenge(challenge_b64, purpose="recover", extra={"user_id": user_id})
+
+    return _json({
+        "challenge_id": cid,
+        "options": json.loads(webauthn.options_to_json(options)),
+    })
+
+def auth_recover_finish(event):
+    """Body: { challenge_id, credential }. Attaches a new passkey to the existing user."""
+    data = _parse_body(event)
+    cid = data.get("challenge_id") or ""
+    credential = data.get("credential") or {}
+
+    ctx = _pop_challenge(cid, "recover")
+    if not ctx:
+        return _json({"error": "Challenge expired or invalid"}, 400)
+
+    try:
+        verification = webauthn.verify_registration_response(
+            credential=credential,
+            expected_challenge=base64url_to_bytes(ctx["challenge"]),
+            expected_rp_id=RP_ID,
+            expected_origin=RP_ORIGIN,
+        )
+    except Exception as e:
+        return _json({"error": str(e)}, 400)
+
+    user_id = ctx["user_id"]
+    cred_id_b64 = bytes_to_base64url(verification.credential_id)
+    _put_credential(
+        cred_id_b64,
+        user_id=user_id,
+        public_key=verification.credential_public_key,
+        sign_count=verification.sign_count,
+        label="recovered",
+    )
+
+    memberships = _list_memberships(user_id)
+    active_hh = memberships[0]["hh_id"] if memberships else None
+    token, _ = _create_session(user_id, active_hh=active_hh)
+    return _json(
+        {"ok": True, "user_id": user_id, "active_hh": active_hh},
+        cookies=[_session_cookie(token)],
+    )
+
+def auth_logout(event):
+    token = _session_token_from_event(event)
+    if token:
+        _delete_session(token)
+    return _json({"ok": True}, cookies=[_clear_session_cookie()])
+
+# ── Household handlers ───────────────────────────────────────────────────────
+
+def households_list(event):
+    session, err = _require_session(event)
+    if err:
+        return err
+    memberships = _list_memberships(session["user_id"])
+    return _json({
+        "active_hh": session.get("active_hh", ""),
+        "households": [
+            {"hh_id": m["hh_id"], "name": m.get("hh_name", ""), "role": m.get("role", "")}
+            for m in memberships
+        ],
+    })
+
+def households_create(event):
+    session, err = _require_session(event)
+    if err:
+        return err
+    data = _parse_body(event)
+    name = (data.get("name") or "").strip()
+    if not name:
+        return _json({"error": "name required"}, 400)
+    hh_id = _create_household(name, owner_uid=session["user_id"])
+    # Switch to new household
+    token = _session_token_from_event(event)
+    table.update_item(
+        Key={"PK": f"SESS#{token}", "SK": "META"},
+        UpdateExpression="SET active_hh = :h",
+        ExpressionAttributeValues={":h": hh_id},
+    )
+    return _json({"ok": True, "hh_id": hh_id})
+
+def households_switch(event):
+    session, err = _require_session(event)
+    if err:
+        return err
+    data = _parse_body(event)
+    hh_id = (data.get("hh_id") or "").strip()
+    if not hh_id:
+        return _json({"error": "hh_id required"}, 400)
+    _, mem_err = _require_member(session, hh_id)
+    if mem_err:
+        return mem_err
+    token = _session_token_from_event(event)
+    table.update_item(
+        Key={"PK": f"SESS#{token}", "SK": "META"},
+        UpdateExpression="SET active_hh = :h",
+        ExpressionAttributeValues={":h": hh_id},
+    )
+    return _json({"ok": True, "active_hh": hh_id})
+
+def household_members_list(event):
+    session, err = _require_session(event)
+    if err:
+        return err
+    hh_id = event.get("pathParameters", {}).get("hh_id", "")
+    _, mem_err = _require_member(session, hh_id)
+    if mem_err:
+        return mem_err
+    members = _list_members(hh_id)
+    # Enrich with display name from USER profile
+    out = []
+    for m in members:
+        u = _get_user(m["user_id"]) or {}
+        out.append({
+            "user_id": m["user_id"],
+            "name": u.get("name", ""),
+            "role": m.get("role", ""),
+            "joined_at": m.get("joined_at", ""),
+        })
+    return _json({"members": out})
+
+# ── Invite handlers ──────────────────────────────────────────────────────────
+
+def invite_preview(event):
+    token = event.get("pathParameters", {}).get("token", "")
+    inv = _get_invite(token)
+    if not inv or inv.get("used_at") or inv.get("expires", 0) < _now():
+        return _json({"error": "Invite is invalid or expired"}, 404)
+    inviter = _get_user(inv["inviter_uid"]) or {}
+    return _json({
+        "hh_name": inv.get("hh_name", ""),
+        "inviter_name": inviter.get("name", ""),
+        "expires": inv.get("expires", 0),
+    })
+
+def invite_create(event):
+    session, err = _require_session(event)
+    if err:
+        return err
+    hh_id = session.get("active_hh") or ""
+    if not hh_id:
+        return _json({"error": "No active household"}, 400)
+    _, mem_err = _require_member(session, hh_id)
+    if mem_err:
+        return mem_err
+    hh = _get_household(hh_id) or {}
+    inv = _create_invite(hh_id, hh.get("name", ""), inviter_uid=session["user_id"])
+    return _json({
+        "token": inv["token"],
+        "expires": inv["expires"],
+        "hh_name": inv.get("hh_name", ""),
+    })
+
+def invite_redeem(event):
+    """Existing logged-in user joins a new household via invite."""
+    session, err = _require_session(event)
+    if err:
+        return err
+    token = event.get("pathParameters", {}).get("token", "")
+    inv = _get_invite(token)
+    if not inv or inv.get("used_at") or inv.get("expires", 0) < _now():
+        return _json({"error": "Invite is invalid or expired"}, 404)
+
+    hh_id = inv["hh_id"]
+    # Already a member?
+    existing = table.get_item(Key={"PK": f"HH#{hh_id}", "SK": f"MEMBER#{session['user_id']}"}).get("Item")
+    if existing:
+        return _json({"error": "Already a member of this household"}, 409)
+
+    consumed = _consume_invite(token)
+    if not consumed:
+        return _json({"error": "Invite already used"}, 409)
+    _add_membership(hh_id, session["user_id"], role="member", hh_name=inv.get("hh_name", ""))
+    return _json({"ok": True, "hh_id": hh_id, "hh_name": inv.get("hh_name", "")})
+
+# ── Household-scoped data (feedings / diapers / naps / settings / state) ─────
+
+def _hh_settings(hh_id: str) -> dict:
+    item = table.get_item(Key={"PK": f"HH#{hh_id}", "SK": "SETTINGS"}).get("Item") or {}
+    return {
+        "countdown_secs": int(item.get("countdown_secs", DEFAULT_COUNTDOWN_SECS)),
+        "preset1_ml": int(item.get("preset1_ml", DEFAULT_PRESET1)),
+        "preset2_ml": int(item.get("preset2_ml", DEFAULT_PRESET2)),
+        "ss_timeout_min": int(item.get("ss_timeout_min", 2)),
+    }
+
+def _hh_timer(hh_id: str) -> dict:
+    item = table.get_item(Key={"PK": f"HH#{hh_id}", "SK": "TIMER"}).get("Item") or {}
     return {
         "countdown_end": float(item.get("countdown_end", 0)),
         "mixed_at_str": item.get("mixed_at_str", ""),
@@ -100,10 +780,9 @@ def _get_timer_state():
         "ntfy_sent": bool(item.get("ntfy_sent", False)),
     }
 
-
-def _put_timer_state(countdown_end, mixed_at_str, mixed_ml, ntfy_sent):
+def _put_hh_timer(hh_id: str, countdown_end: float, mixed_at_str: str, mixed_ml: int, ntfy_sent: bool):
     table.put_item(Item={
-        "PK": "STATE",
+        "PK": f"HH#{hh_id}",
         "SK": "TIMER",
         "countdown_end": Decimal(str(countdown_end)),
         "mixed_at_str": mixed_at_str,
@@ -111,1082 +790,432 @@ def _put_timer_state(countdown_end, mixed_at_str, mixed_ml, ntfy_sent):
         "ntfy_sent": ntfy_sent,
     })
 
-
-def _get_weight_log():
-    """Return list of weight entries [{date, lbs}] sorted by date."""
-    resp = table.get_item(Key={"PK": "WEIGHT", "SK": "DATA"})
-    item = resp.get("Item")
-    if not item:
-        return []
-    import json as _json
-    return _json.loads(item.get("entries", "[]"))
-
-def _put_weight_log(entries):
-    """Store weight entries list to DynamoDB."""
-    import json as _json
-    table.put_item(Item={"PK": "WEIGHT", "SK": "DATA", "entries": _json.dumps(entries)})
-
-
-def _get_settings():
-    resp = table.get_item(Key={"PK": "STATE", "SK": "SETTINGS"})
-    item = resp.get("Item", {})
-    return {
-        "countdown_secs": int(item.get("countdown_secs", DEFAULT_COUNTDOWN_SECS)),
-        "ss_timeout_min": int(item.get("ss_timeout_min", 2)),
-        "preset1_ml": int(item.get("preset1_ml", 90)),
-        "preset2_ml": int(item.get("preset2_ml", 120)),
+def _query_hh_prefix(hh_id: str, prefix: str) -> list[dict]:
+    items = []
+    kwargs = {
+        "KeyConditionExpression": Key("PK").eq(f"HH#{hh_id}") & Key("SK").begins_with(prefix),
+        "ScanIndexForward": True,
     }
+    while True:
+        resp = table.query(**kwargs)
+        items.extend(resp.get("Items", []))
+        if "LastEvaluatedKey" not in resp:
+            break
+        kwargs["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
+    return [_decimal_to_native(i) for i in items]
 
+def get_state(event):
+    session, err = _require_session(event)
+    if err:
+        return err
+    hh_id = session.get("active_hh") or ""
+    if not hh_id:
+        return _json({"error": "No active household"}, 400)
+    _, mem_err = _require_member(session, hh_id)
+    if mem_err:
+        return mem_err
 
-def _put_settings(settings):
-    table.put_item(Item={
-        "PK": "STATE",
-        "SK": "SETTINGS",
-        "countdown_secs": settings.get("countdown_secs", DEFAULT_COUNTDOWN_SECS),
-        "ss_timeout_min": settings.get("ss_timeout_min", 2),
-        "preset1_ml": settings.get("preset1_ml", 90),
-        "preset2_ml": settings.get("preset2_ml", 120),
+    settings = _hh_settings(hh_id)
+    timer = _hh_timer(hh_id)
+    feedings = [_feed_to_api(i) for i in _query_hh_prefix(hh_id, "FEED#")]
+    diapers = [_diaper_to_api(i) for i in _query_hh_prefix(hh_id, "DIAPER#")]
+    naps = [_nap_to_api(i) for i in _query_hh_prefix(hh_id, "NAP#")]
+
+    remaining = max(0.0, timer["countdown_end"] - time.time()) if timer["countdown_end"] else 0.0
+    expired = timer["countdown_end"] > 0 and remaining <= 0
+
+    return _json({
+        "countdown_end": timer["countdown_end"],
+        "mixed_at_str": timer["mixed_at_str"],
+        "mixed_ml": timer["mixed_ml"],
+        "remaining_secs": remaining,
+        "expired": expired,
+        "ntfy_sent": timer["ntfy_sent"],
+        "mix_log": feedings,
+        "diaper_log": diapers,
+        "nap_log": naps,
+        "settings": settings,
+        "combos": [[c[0], c[1]] for c in COMBOS],
+        "powder_per_60": POWDER_PER_60ML,
+        "weight_log": [],
     })
 
-
-def _get_all_log_entries():
-    """Query all LOG entries, sorted by SK."""
-    items = []
-    resp = table.query(
-        KeyConditionExpression=Key("PK").eq("LOG"),
-        ScanIndexForward=True,
-    )
-    items.extend(resp.get("Items", []))
-    while resp.get("LastEvaluatedKey"):
-        resp = table.query(
-            KeyConditionExpression=Key("PK").eq("LOG"),
-            ScanIndexForward=True,
-            ExclusiveStartKey=resp["LastEvaluatedKey"],
-        )
-        items.extend(resp.get("Items", []))
-    return _decimal_to_native(items)
-
-
-def _get_all_diaper_entries():
-    """Query all DIAPER_LOG entries, sorted by SK."""
-    items = []
-    resp = table.query(
-        KeyConditionExpression=Key("PK").eq("DIAPER_LOG"),
-        ScanIndexForward=True,
-    )
-    items.extend(resp.get("Items", []))
-    while resp.get("LastEvaluatedKey"):
-        resp = table.query(
-            KeyConditionExpression=Key("PK").eq("DIAPER_LOG"),
-            ScanIndexForward=True,
-            ExclusiveStartKey=resp["LastEvaluatedKey"],
-        )
-        items.extend(resp.get("Items", []))
-    return _decimal_to_native(items)
-
-
-def _diaper_entry_to_api(item):
-    return {
-        "sk": item["SK"],
-        "type": item.get("type", ""),
-        "date": item.get("date", ""),
-        "created_by": item.get("created_by", ""),
-    }
-
-
-def _get_all_nap_entries():
-    items = []
-    resp = table.query(
-        KeyConditionExpression=Key("PK").eq("NAP_LOG"),
-        ScanIndexForward=True,
-    )
-    items.extend(resp.get("Items", []))
-    while resp.get("LastEvaluatedKey"):
-        resp = table.query(
-            KeyConditionExpression=Key("PK").eq("NAP_LOG"),
-            ScanIndexForward=True,
-            ExclusiveStartKey=resp["LastEvaluatedKey"],
-        )
-        items.extend(resp.get("Items", []))
-    return _decimal_to_native(items)
-
-
-def _nap_entry_to_api(item):
-    out = {
-        "sk": item["SK"],
-        "date": item.get("date", ""),
-        "created_by": item.get("created_by", ""),
-    }
-    if "duration_mins" in item and item.get("duration_mins") is not None:
-        out["duration_mins"] = int(item["duration_mins"])
-    return out
-
-
-def _log_entry_to_api(item):
-    """Convert DynamoDB log item to API response format."""
+def _feed_to_api(item):
     return {
         "sk": item["SK"],
         "text": item.get("text", ""),
         "leftover": item.get("leftover", ""),
         "ml": int(item.get("ml", 0)),
         "date": item.get("date", ""),
-        "created_by": item.get("created_by", ""),
+        "created_by": item.get("created_by_name", ""),
     }
 
-
-def _send_ntfy(msg, title="Bottle Expired", mixed_at=""):
-    """Send push notification via ntfy.sh."""
-    import logging
-    logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
-    ntfy_title = f"Bottle Expired - mixed at {mixed_at}" if mixed_at else title
-    try:
-        req = urllib.request.Request(
-            f"https://ntfy.sh/{NTFY_TOPIC}",
-            data=msg.encode(),
-            headers={"Title": ntfy_title, "Priority": "high", "Tags": "baby_bottle"},
-        )
-        resp = urllib.request.urlopen(req, timeout=10)
-        logger.info(f"ntfy sent: {resp.status} — {ntfy_title}")
-    except Exception as e:
-        logger.error(f"ntfy failed: {type(e).__name__}: {e}")
-
-
-def _check_expiry_and_notify(timer_state):
-    """Check if timer expired, send ntfy if not yet sent. Returns updated state."""
-    countdown_end = timer_state["countdown_end"]
-    if countdown_end <= 0:
-        return timer_state
-
-    remaining = max(0.0, countdown_end - time.time())
-    expired = remaining <= 0
-
-    if expired and not timer_state["ntfy_sent"]:
-        # Atomic conditional update to prevent duplicate notifications
-        import logging
-        logging.getLogger().info(f"Timer expired, attempting to send notification for {timer_state['mixed_at_str']}")
-        try:
-            table.update_item(
-                Key={"PK": "STATE", "SK": "TIMER"},
-                UpdateExpression="SET ntfy_sent = :true",
-                ConditionExpression="ntfy_sent = :false",
-                ExpressionAttributeValues={":true": True, ":false": False},
-            )
-            _send_ntfy(
-                "Formula has expired - discard the milk!",
-                mixed_at=timer_state["mixed_at_str"],
-            )
-            timer_state["ntfy_sent"] = True
-        except Exception:
-            # ConditionalCheckFailedException or any other error — assume already sent
-            timer_state["ntfy_sent"] = True
-
-    # Also re-read ntfy_sent from DB to catch race conditions
-    if expired:
-        fresh = _get_timer_state()
-        timer_state["ntfy_sent"] = fresh["ntfy_sent"]
-
-    return timer_state
-
-
-def _restore_state_from_log():
-    """After deleting the latest entry, restore timer from the new latest."""
-    entries = _get_all_log_entries()
-    settings = _get_settings()
-    countdown_secs = settings["countdown_secs"]
-
-    if not entries:
-        _put_timer_state(0.0, "", 0, False)
-        return
-
-    latest = entries[-1]
-    date_str = latest.get("date", "")
-    if not date_str:
-        _put_timer_state(0.0, "", 0, False)
-        return
-
-    try:
-        mixed_dt = datetime.strptime(date_str, "%Y-%m-%d %I:%M %p").replace(tzinfo=CT)
-        mixed_at_str = mixed_dt.strftime("%I:%M %p")
-        mixed_ml = int(latest.get("ml", 0))
-        countdown_end = mixed_dt.timestamp() + countdown_secs
-        expired = time.time() > countdown_end
-        _put_timer_state(countdown_end, mixed_at_str, mixed_ml, expired)
-    except (ValueError, KeyError):
-        _put_timer_state(0.0, "", 0, False)
-
-
-# ── Weekly notification ──────────────────────────────────────────────────────
-
-def _compute_weekly_insights(entries):
-    now = _now_ct()
-    this_monday = (now - timedelta(days=now.weekday())).replace(
-        hour=0, minute=0, second=0, microsecond=0)
-    last_monday = this_monday - timedelta(days=7)
-
-    this_week = {"total_ml": 0, "bottles": 0, "days": set()}
-    last_week = {"total_ml": 0, "bottles": 0, "days": set()}
-
-    for e in entries:
-        if not e.get("date") or not e.get("ml"):
-            continue
-        try:
-            d = datetime.strptime(e["date"], "%Y-%m-%d %I:%M %p").replace(tzinfo=CT)
-        except (ValueError, TypeError):
-            continue
-        ml = int(e["ml"])
-        day_str = d.strftime("%Y-%m-%d")
-        if d >= this_monday:
-            this_week["total_ml"] += ml
-            this_week["bottles"] += 1
-            this_week["days"].add(day_str)
-        elif d >= last_monday:
-            last_week["total_ml"] += ml
-            last_week["bottles"] += 1
-            last_week["days"].add(day_str)
-
-    tw_days = max(1, len(this_week["days"]))
-    lw_days = max(1, len(last_week["days"]))
-
-    result = {
-        "this_week_ml": this_week["total_ml"],
-        "this_week_bottles": this_week["bottles"],
-        "this_week_avg": round(this_week["total_ml"] / tw_days),
-        "last_week_ml": last_week["total_ml"],
-        "last_week_bottles": last_week["bottles"],
-        "last_week_avg": round(last_week["total_ml"] / lw_days),
-    }
-    change = this_week["total_ml"] - last_week["total_ml"]
-    result["change_ml"] = change
-    result["change_pct"] = round(change / last_week["total_ml"] * 100) if last_week["total_ml"] > 0 else None
-    result["avg_change"] = result["this_week_avg"] - result["last_week_avg"]
-    return result
-
-
-def _check_weekly_notification(entries):
-    current_week = _now_ct().strftime("%G-W%V")
-
-    resp = table.get_item(Key={"PK": "STATE", "SK": "WEEKLY_NTFY"})
-    item = resp.get("Item", {})
-    if item.get("last_sent_week") == current_week:
-        return
-
-    insights = _compute_weekly_insights(entries)
-
-    lines = []
-    lines.append(f"This week: {insights['this_week_ml']}ml "
-                 f"({insights['this_week_bottles']} bottles, "
-                 f"avg {insights['this_week_avg']}ml/day)")
-    if insights["last_week_ml"] > 0:
-        sign = "+" if insights["change_ml"] >= 0 else ""
-        pct = f" ({sign}{insights['change_pct']}%)" if insights["change_pct"] is not None else ""
-        avg_sign = "+" if insights["avg_change"] >= 0 else ""
-        lines.append(f"Last week: {insights['last_week_ml']}ml "
-                     f"({insights['last_week_bottles']} bottles, "
-                     f"avg {insights['last_week_avg']}ml/day)")
-        lines.append(f"Change: {sign}{insights['change_ml']}ml{pct} | "
-                     f"Avg/day: {avg_sign}{insights['avg_change']}ml")
-    else:
-        lines.append("No data from last week to compare.")
-
-    msg = "\n".join(lines)
-    try:
-        _send_ntfy(msg, title="Weekly Summary")
-        table.put_item(Item={
-            "PK": "STATE",
-            "SK": "WEEKLY_NTFY",
-            "last_sent_week": current_week,
-        })
-    except Exception:
-        pass
-
-
-# ── Auth helpers ─────────────────────────────────────────────────────────────
-
-def _get_session_from_event(event):
-    """Extract session token from cookie header."""
-    cookies = event.get("cookies", [])
-    for c in cookies:
-        if c.startswith("session="):
-            return c.split("=", 1)[1]
-    return None
-
-
-def _validate_session(token):
-    """Check if session token is valid and not expired. Returns session dict or None."""
-    if not token:
-        return None
-    resp = table.get_item(Key={"PK": "AUTH", "SK": f"SESSION#{token}"})
-    item = resp.get("Item")
-    if not item:
-        return None
-    if time.time() > float(item.get("expires", 0)):
-        table.delete_item(Key={"PK": "AUTH", "SK": f"SESSION#{token}"})
-        return None
-    return {"user_name": item.get("user_name", ""), "cred_id": item.get("cred_id", "")}
-
-
-def _create_session(user_name="", cred_id=""):
-    """Create a new session token and store in DynamoDB."""
-    token = secrets.token_urlsafe(32)
-    expires = time.time() + SESSION_TTL_SECS
-    table.put_item(Item={
-        "PK": "AUTH",
-        "SK": f"SESSION#{token}",
-        "expires": int(expires),
-        "user_name": user_name,
-        "cred_id": cred_id,
-    })
-    return token, int(expires)
-
-
-def _session_cookie(token, max_age):
-    return f"session={token}; Path=/; Max-Age={max_age}; SameSite=Lax; Secure; HttpOnly"
-
-
-def _get_credentials():
-    """Get all registered passkey credentials."""
-    resp = table.query(
-        KeyConditionExpression=Key("PK").eq("AUTH") & Key("SK").begins_with("CRED#")
-    )
-    return resp.get("Items", [])
-
-
-def _has_any_credentials():
-    return len(_get_credentials()) > 0
-
-
-def auth_status(event):
-    """Check if user is authenticated and if any credentials are registered."""
-    token = _get_session_from_event(event)
-    session = _validate_session(token)
-    has_creds = _has_any_credentials()
-    return _json_response({
-        "authenticated": session is not None,
-        "registered": has_creds,
-        "user_name": session["user_name"] if session else "",
-    })
-
-
-def auth_register_options(event):
-    """Generate registration options for new passkey."""
-    creds = _get_credentials()
-    exclude_credentials = []
-    for c in creds:
-        exclude_credentials.append({
-            "id": c["credential_id"],
-            "type": "public-key",
-        })
-
-    options = webauthn.generate_registration_options(
-        rp_id=RP_ID,
-        rp_name=RP_NAME,
-        user_id=b"formula-helper-user",
-        user_name="admin",
-        user_display_name="Formula Helper Admin",
-        authenticator_selection=AuthenticatorSelectionCriteria(
-            resident_key=ResidentKeyRequirement.PREFERRED,
-            user_verification=UserVerificationRequirement.PREFERRED,
-        ),
-    )
-
-    # Store challenge for verification
-    challenge_b64 = bytes_to_base64url(options.challenge)
-    table.put_item(Item={
-        "PK": "AUTH",
-        "SK": "CHALLENGE#registration",
-        "challenge": challenge_b64,
-        "expires": int(time.time()) + 300,
-    })
-
-    return _json_response(json.loads(webauthn.options_to_json(options)))
-
-
-def auth_register_verify(event):
-    """Verify registration response and store credential."""
-    data = _parse_body(event)
-    user_name = data.pop("user_name", "").strip().lower()
-    if not _is_allowed_to_register(user_name):
-        return _json_response({"error": f"'{user_name}' is not on the allowed users list"}, 403)
-
-    # Get stored challenge
-    resp = table.get_item(Key={"PK": "AUTH", "SK": "CHALLENGE#registration"})
-    challenge_item = resp.get("Item")
-    if not challenge_item or time.time() > float(challenge_item.get("expires", 0)):
-        return _json_response({"error": "Challenge expired"}, 400)
-
-    challenge = base64url_to_bytes(challenge_item["challenge"])
-
-    try:
-        verification = webauthn.verify_registration_response(
-            credential=data,
-            expected_challenge=challenge,
-            expected_rp_id=RP_ID,
-            expected_origin=RP_ORIGIN,
-        )
-    except Exception as e:
-        return _json_response({"error": str(e)}, 400)
-
-    # Store credential with user name
-    cred_id_b64 = bytes_to_base64url(verification.credential_id)
-    table.put_item(Item={
-        "PK": "AUTH",
-        "SK": f"CRED#{cred_id_b64}",
-        "credential_id": cred_id_b64,
-        "public_key": bytes_to_base64url(verification.credential_public_key),
-        "sign_count": verification.sign_count,
-        "user_name": user_name,
-        "created": _now_ct().isoformat(),
-    })
-
-    # Clean up challenge
-    table.delete_item(Key={"PK": "AUTH", "SK": "CHALLENGE#registration"})
-
-    # Create session with user name
-    token, expires = _create_session(user_name=user_name, cred_id=cred_id_b64)
+def _diaper_to_api(item):
     return {
-        "statusCode": 200,
-        "headers": {"Content-Type": "application/json"},
-        "cookies": [_session_cookie(token, SESSION_TTL_SECS)],
-        "body": json.dumps({"ok": True}),
+        "sk": item["SK"],
+        "type": item.get("type", ""),
+        "date": item.get("date", ""),
+        "created_by": item.get("created_by_name", ""),
     }
 
+def _nap_to_api(item):
+    out = {
+        "sk": item["SK"],
+        "date": item.get("date", ""),
+        "created_by": item.get("created_by_name", ""),
+    }
+    if item.get("duration_mins") is not None:
+        out["duration_mins"] = int(item["duration_mins"])
+    return out
 
-def auth_login_options(event):
-    """Generate authentication options for existing passkey."""
-    creds = _get_credentials()
-    allow_credentials = [
-        PublicKeyCredentialDescriptor(id=base64url_to_bytes(c["credential_id"]))
-        for c in creds
-    ]
+def _creator_name(session: dict) -> str:
+    user = _get_user(session["user_id"])
+    return (user or {}).get("name", "")
 
-    options = webauthn.generate_authentication_options(
-        rp_id=RP_ID,
-        allow_credentials=allow_credentials if allow_credentials else None,
-        user_verification=UserVerificationRequirement.PREFERRED,
-    )
+def post_start_feeding(event):
+    session, err = _require_session(event)
+    if err:
+        return err
+    hh_id = session.get("active_hh") or ""
+    if not hh_id:
+        return _json({"error": "No active household"}, 400)
+    _, mem_err = _require_member(session, hh_id)
+    if mem_err:
+        return mem_err
 
-    challenge_b64 = bytes_to_base64url(options.challenge)
-    table.put_item(Item={
-        "PK": "AUTH",
-        "SK": "CHALLENGE#authentication",
-        "challenge": challenge_b64,
-        "expires": int(time.time()) + 300,
-    })
-
-    return _json_response(json.loads(webauthn.options_to_json(options)))
-
-
-def auth_login_verify(event):
-    """Verify authentication response and create session."""
     data = _parse_body(event)
-
-    # Get stored challenge
-    resp = table.get_item(Key={"PK": "AUTH", "SK": "CHALLENGE#authentication"})
-    challenge_item = resp.get("Item")
-    if not challenge_item or time.time() > float(challenge_item.get("expires", 0)):
-        return _json_response({"error": "Challenge expired"}, 400)
-
-    challenge = base64url_to_bytes(challenge_item["challenge"])
-
-    # Find the credential
-    cred_id_b64 = data.get("id", "")
-    resp = table.get_item(Key={"PK": "AUTH", "SK": f"CRED#{cred_id_b64}"})
-    cred_item = resp.get("Item")
-    if not cred_item:
-        return _json_response({"error": "Unknown credential"}, 400)
-
     try:
-        verification = webauthn.verify_authentication_response(
-            credential=data,
-            expected_challenge=challenge,
-            expected_rp_id=RP_ID,
-            expected_origin=RP_ORIGIN,
-            credential_public_key=base64url_to_bytes(cred_item["public_key"]),
-            credential_current_sign_count=int(cred_item.get("sign_count", 0)),
-        )
-    except Exception as e:
-        return _json_response({"error": str(e)}, 400)
+        ml = int(data.get("ml", 0))
+    except (TypeError, ValueError):
+        return _json({"error": "invalid ml"}, 400)
+    if ml <= 0:
+        return _json({"error": "ml must be positive"}, 400)
 
-    # Update sign count
-    table.update_item(
-        Key={"PK": "AUTH", "SK": f"CRED#{cred_id_b64}"},
-        UpdateExpression="SET sign_count = :sc",
-        ExpressionAttributeValues={":sc": verification.new_sign_count},
-    )
+    settings = _hh_settings(hh_id)
+    now_utc = datetime.now(timezone.utc)
+    mixed_at = now_utc.strftime("%I:%M %p").lstrip("0")
+    countdown_end = time.time() + settings["countdown_secs"]
 
-    # Clean up challenge
-    table.delete_item(Key={"PK": "AUTH", "SK": "CHALLENGE#authentication"})
-
-    # Create session with user name from credential
-    user_name = cred_item.get("user_name", "")
-    token, expires = _create_session(user_name=user_name, cred_id=cred_id_b64)
-    return {
-        "statusCode": 200,
-        "headers": {"Content-Type": "application/json"},
-        "cookies": [_session_cookie(token, SESSION_TTL_SECS)],
-        "body": json.dumps({"ok": True, "user_name": user_name}),
-    }
-
-
-ADMIN_USER = "ashok"  # always allowed to register; has access to management endpoints
-
-# ── Allowed-user allowlist ────────────────────────────────────────────────────
-
-def _get_allowed_users():
-    resp = table.query(
-        KeyConditionExpression=Key("PK").eq("AUTH") & Key("SK").begins_with("ALLOWED#")
-    )
-    return [item["name"] for item in resp.get("Items", [])]
-
-
-def _is_allowed_to_register(user_name):
-    if user_name == ADMIN_USER:
-        return True
-    resp = table.get_item(Key={"PK": "AUTH", "SK": f"ALLOWED#{user_name}"})
-    return "Item" in resp
-
-
-def allowed_users_list(event):
-    token = _get_session_from_event(event)
-    session = _validate_session(token)
-    if not session or session.get("user_name") != ADMIN_USER:
-        return _json_response({"error": "Forbidden"}, 403)
-    return _json_response({"allowed_users": _get_allowed_users()})
-
-
-def allowed_users_add(event):
-    token = _get_session_from_event(event)
-    session = _validate_session(token)
-    if not session or session.get("user_name") != ADMIN_USER:
-        return _json_response({"error": "Forbidden"}, 403)
-    data = _parse_body(event)
-    name = (data.get("name") or "").strip().lower()
-    if not name:
-        return _json_response({"error": "Name required"}, 400)
+    sk = f"FEED#{now_utc.strftime('%Y%m%dT%H%M%S')}#{_new_id()[:6]}"
+    date_str = now_utc.strftime("%Y-%m-%d %I:%M %p")
     table.put_item(Item={
-        "PK": "AUTH", "SK": f"ALLOWED#{name}",
-        "name": name, "created": _now_ct().isoformat(),
-    })
-    return _json_response({"ok": True})
-
-
-def allowed_users_remove(event):
-    token = _get_session_from_event(event)
-    session = _validate_session(token)
-    if not session or session.get("user_name") != ADMIN_USER:
-        return _json_response({"error": "Forbidden"}, 403)
-    name = event.get("pathParameters", {}).get("name", "")
-    if name == ADMIN_USER:
-        return _json_response({"error": "Cannot remove admin"}, 400)
-    table.delete_item(Key={"PK": "AUTH", "SK": f"ALLOWED#{name}"})
-    return _json_response({"ok": True})
-
-
-# ── Credential management (ashok only) ───────────────────────────────────────
-
-def auth_list_credentials(event):
-    """List all registered passkeys. Ashok-only."""
-    token = _get_session_from_event(event)
-    session = _validate_session(token)
-    if not session or session.get("user_name") != "ashok":
-        return _json_response({"error": "Forbidden"}, 403)
-    creds = _get_credentials()
-    result = [
-        {
-            "cred_id": c["credential_id"],
-            "user_name": c.get("user_name", ""),
-            "created": c.get("created", ""),
-        }
-        for c in creds
-    ]
-    return _json_response({"credentials": result})
-
-
-def auth_delete_credential(event):
-    """Delete a passkey by credential ID. Ashok-only."""
-    token = _get_session_from_event(event)
-    session = _validate_session(token)
-    if not session or session.get("user_name") != "ashok":
-        return _json_response({"error": "Forbidden"}, 403)
-    cred_id = event.get("pathParameters", {}).get("cred_id", "")
-    if not cred_id:
-        return _json_response({"error": "Missing cred_id"}, 400)
-    table.delete_item(Key={"PK": "AUTH", "SK": f"CRED#{cred_id}"})
-    return _json_response({"ok": True})
-
-
-# ── Push subscription handlers ───────────────────────────────────────────────
-
-def push_subscribe(event):
-    """Store a push subscription."""
-    data = _parse_body(event)
-    sub = data.get("subscription")
-    user_name = data.get("user_name", "")
-    if not sub or not sub.get("endpoint"):
-        return _json_response({"ok": False, "error": "invalid subscription"}, 400)
-
-    # Use endpoint hash as unique ID
-    import hashlib
-    sub_id = hashlib.sha256(sub["endpoint"].encode()).hexdigest()[:16]
-
-    table.put_item(Item={
-        "PK": "PUSH",
-        "SK": f"SUB#{sub_id}",
-        "subscription": json.dumps(sub),
-        "user_name": user_name,
-        "created": _now_ct().isoformat(),
-    })
-    return _json_response({"ok": True})
-
-
-def push_unsubscribe(event):
-    """Remove a push subscription."""
-    data = _parse_body(event)
-    endpoint = data.get("endpoint", "")
-    if not endpoint:
-        return _json_response({"ok": False, "error": "missing endpoint"}, 400)
-
-    import hashlib
-    sub_id = hashlib.sha256(endpoint.encode()).hexdigest()[:16]
-    table.delete_item(Key={"PK": "PUSH", "SK": f"SUB#{sub_id}"})
-    return _json_response({"ok": True})
-
-
-def push_vapid_key(event):
-    """Return the VAPID public key for the client."""
-    return _json_response({"publicKey": VAPID_PUBLIC_KEY})
-
-
-# ── Route handlers ───────────────────────────────────────────────────────────
-
-def get_state(event):
-    timer_state = _get_timer_state()
-    settings = _get_settings()
-    entries = _get_all_log_entries()
-
-    timer_state = _check_expiry_and_notify(timer_state)
-
-    countdown_end = timer_state["countdown_end"]
-    remaining = max(0.0, countdown_end - time.time()) if countdown_end > 0 else -1
-    expired = countdown_end > 0 and remaining <= 0
-
-    mix_log = [_log_entry_to_api(e) for e in entries]
-
-    return _json_response({
-        "countdown_end": countdown_end,
-        "mixed_at_str": timer_state["mixed_at_str"],
-        "mixed_ml": timer_state["mixed_ml"],
-        "remaining_secs": max(0, remaining),
-        "expired": expired,
-        "ntfy_sent": timer_state["ntfy_sent"],
-        "mix_log": mix_log,
-        "settings": settings,
-        "combos": [[w, round(p, 2)] for w, p in COMBOS],
-        "powder_per_60": POWDER_PER_60ML,
-        "weight_log": _get_weight_log(),
-        "diaper_log": [_diaper_entry_to_api(e) for e in _get_all_diaper_entries()],
-        "nap_log": [_nap_entry_to_api(e) for e in _get_all_nap_entries()],
-    })
-
-
-def post_start(event):
-    data = _parse_body(event)
-    ml = int(data.get("ml", 90))
-    settings = _get_settings()
-    countdown_secs = settings["countdown_secs"]
-
-    # Get user name from session, or "Pi" if using API key
-    token = _get_session_from_event(event)
-    session = _validate_session(token)
-    if session:
-        user_name = session["user_name"]
-    elif event.get("headers", {}).get("x-api-key") == PI_API_KEY:
-        user_name = "Pi"
-    else:
-        user_name = ""
-
-    now = _now_ct()
-    countdown_end = time.time() + countdown_secs
-    mixed_at_str = now.strftime("%I:%M %p")
-    date_str = now.strftime("%Y-%m-%d %I:%M %p")
-    sk = now.strftime("%Y-%m-%d") + "#" + f"{time.time():.3f}"
-
-    table.put_item(Item={
-        "PK": "LOG",
+        "PK": f"HH#{hh_id}",
         "SK": sk,
-        "text": f"{ml}ml @ {mixed_at_str}",
-        "leftover": "",
         "ml": ml,
+        "leftover": "",
+        "text": f"{ml}ml @ {mixed_at}",
         "date": date_str,
-        "created_by": user_name,
+        "created_by_uid": session["user_id"],
+        "created_by_name": _creator_name(session),
     })
+    _put_hh_timer(hh_id, countdown_end, mixed_at, ml, False)
+    return _json({"ok": True, "sk": sk})
 
-    _put_timer_state(countdown_end, mixed_at_str, ml, False)
+def post_feeding(event):
+    """Manual backfill of a feeding entry."""
+    session, err = _require_session(event)
+    if err:
+        return err
+    hh_id = session.get("active_hh") or ""
+    _, mem_err = _require_member(session, hh_id)
+    if mem_err:
+        return mem_err
 
-    # Check weekly notification
-    try:
-        entries = _get_all_log_entries()
-        _check_weekly_notification(entries)
-    except Exception:
-        pass
-
-    return _json_response({"ok": True, "sk": sk})
-
-
-def post_log(event):
-    """Manually create a log entry without affecting the timer."""
     data = _parse_body(event)
     ml = int(data.get("ml", 0))
-    if ml <= 0:
-        return _json_response({"ok": False, "error": "ml must be positive"}, 400)
-
-    # Accept an explicit datetime string "YYYY-MM-DD HH:MM AM/PM", else use now
-    date_str = data.get("date", "")
-    if date_str:
-        try:
-            dt = datetime.strptime(date_str, "%Y-%m-%d %I:%M %p").replace(tzinfo=CT)
-            sk = dt.strftime("%Y-%m-%d") + "#" + f"{dt.timestamp():.3f}"
-            mixed_at_str = dt.strftime("%I:%M %p")
-        except ValueError:
-            return _json_response({"ok": False, "error": "invalid date format"}, 400)
-    else:
-        now = _now_ct()
-        mixed_at_str = now.strftime("%I:%M %p")
-        date_str = now.strftime("%Y-%m-%d %I:%M %p")
-        sk = now.strftime("%Y-%m-%d") + "#" + f"{time.time():.3f}"
-
+    date_str = data.get("date", "").strip()
+    leftover = data.get("leftover", "")
+    if ml <= 0 or not date_str:
+        return _json({"error": "ml and date required"}, 400)
+    sk = f"FEED#{_backfill_sk(date_str)}"
     table.put_item(Item={
-        "PK": "LOG",
+        "PK": f"HH#{hh_id}",
         "SK": sk,
-        "text": f"{ml}ml @ {mixed_at_str}",
-        "leftover": "",
         "ml": ml,
+        "leftover": "".join(c for c in leftover if c.isdigit()),
+        "text": data.get("text", f"{ml}ml"),
         "date": date_str,
-        "created_by": "manual",
+        "created_by_uid": session["user_id"],
+        "created_by_name": _creator_name(session),
     })
+    return _json({"ok": True, "sk": sk})
 
-    return _json_response({"ok": True, "sk": sk})
-
-
-def put_log(event):
+def put_feeding(event):
+    session, err = _require_session(event)
+    if err:
+        return err
+    hh_id = session.get("active_hh") or ""
+    _, mem_err = _require_member(session, hh_id)
+    if mem_err:
+        return mem_err
     sk = event.get("pathParameters", {}).get("sk", "")
     if not sk:
-        return _json_response({"ok": False, "error": "missing sk"}, 400)
-
+        return _json({"error": "sk required"}, 400)
     data = _parse_body(event)
-    update_expr_parts = []
-    expr_values = {}
-
-    if "text" in data:
-        update_expr_parts.append("#t = :text")
-        expr_values[":text"] = data["text"]
-    if "leftover" in data:
-        update_expr_parts.append("leftover = :leftover")
-        expr_values[":leftover"] = data["leftover"]
+    updates = []
+    values = {}
+    names = {}
     if "ml" in data:
-        update_expr_parts.append("ml = :ml")
-        expr_values[":ml"] = int(data["ml"])
+        updates.append("ml = :ml"); values[":ml"] = int(data["ml"])
+    if "leftover" in data:
+        updates.append("leftover = :lo"); values[":lo"] = "".join(c for c in str(data["leftover"]) if c.isdigit())
+    if "text" in data:
+        updates.append("#t = :t"); values[":t"] = data["text"]; names["#t"] = "text"
     if "date" in data:
-        update_expr_parts.append("#d = :date")
-        expr_values[":date"] = data["date"]
-
-    if not update_expr_parts:
-        return _json_response({"ok": False, "error": "nothing to update"}, 400)
-
-    expr_names = {}
-    if any("#t" in p for p in update_expr_parts):
-        expr_names["#t"] = "text"
-    if any("#d" in p for p in update_expr_parts):
-        expr_names["#d"] = "date"
-
+        updates.append("#d = :d"); values[":d"] = data["date"]; names["#d"] = "date"
+    if not updates:
+        return _json({"error": "nothing to update"}, 400)
+    kwargs = {
+        "Key": {"PK": f"HH#{hh_id}", "SK": sk},
+        "UpdateExpression": "SET " + ", ".join(updates),
+        "ExpressionAttributeValues": values,
+        "ConditionExpression": "attribute_exists(PK)",
+    }
+    if names:
+        kwargs["ExpressionAttributeNames"] = names
     try:
-        update_kwargs = {
-            "Key": {"PK": "LOG", "SK": sk},
-            "UpdateExpression": "SET " + ", ".join(update_expr_parts),
-            "ExpressionAttributeValues": expr_values,
-            "ConditionExpression": "attribute_exists(PK)",
-        }
-        if expr_names:
-            update_kwargs["ExpressionAttributeNames"] = expr_names
-        table.update_item(**update_kwargs)
-    except dynamodb.meta.client.exceptions.ConditionalCheckFailedException:
-        return _json_response({"ok": False, "error": "entry not found"}, 404)
+        table.update_item(**kwargs)
+    except _dynamodb.meta.client.exceptions.ConditionalCheckFailedException:
+        return _json({"error": "not found"}, 404)
+    return _json({"ok": True})
 
-    return _json_response({"ok": True})
-
-
-def delete_log(event):
+def delete_feeding(event):
+    session, err = _require_session(event)
+    if err:
+        return err
+    hh_id = session.get("active_hh") or ""
+    _, mem_err = _require_member(session, hh_id)
+    if mem_err:
+        return mem_err
     sk = event.get("pathParameters", {}).get("sk", "")
-    if not sk:
-        return _json_response({"ok": False, "error": "missing sk"}, 400)
+    table.delete_item(Key={"PK": f"HH#{hh_id}", "SK": sk})
+    return _json({"ok": True})
 
-    entries = _get_all_log_entries()
-    is_latest = bool(entries and entries[-1].get("SK") == sk)
-
-    # Also restore if this entry is driving the current timer but isn't the latest
-    # (e.g. a newer entry was manually added after the timer was started)
-    is_active_timer = False
-    if not is_latest:
-        timer_state = _get_timer_state()
-        if timer_state["countdown_end"] > 0:
-            entry = next((e for e in entries if e.get("SK") == sk), None)
-            if entry:
-                try:
-                    mixed_dt = datetime.strptime(entry.get("date", ""), "%Y-%m-%d %I:%M %p")
-                    is_active_timer = mixed_dt.strftime("%I:%M %p") == timer_state["mixed_at_str"]
-                except (ValueError, KeyError):
-                    pass
-
-    table.delete_item(Key={"PK": "LOG", "SK": sk})
-
-    if is_latest or is_active_timer:
-        _restore_state_from_log()
-
-    return _json_response({"ok": True})
-
-
-def post_weight(event):
-    """Upload weight log. Body: {entries: [{date: 'YYYY-MM-DD', lbs: float}]}"""
-    data = _parse_body(event)
-    entries = data.get("entries", [])
-    if not isinstance(entries, list):
-        return _json_response({"ok": False, "error": "entries must be a list"}, 400)
-    # Validate and clean
-    cleaned = []
-    for e in entries:
-        try:
-            cleaned.append({"date": str(e["date"]), "lbs": float(e["lbs"])})
-        except (KeyError, ValueError, TypeError):
-            continue
-    cleaned.sort(key=lambda x: x["date"])
-    _put_weight_log(cleaned)
-    return _json_response({"ok": True, "count": len(cleaned)})
-
+def _backfill_sk(date_str: str) -> str:
+    """Build a sortable SK suffix from a user-entered date string."""
+    try:
+        dt = datetime.strptime(date_str, "%Y-%m-%d %I:%M %p")
+        return dt.strftime("%Y%m%dT%H%M%S") + f"#{_new_id()[:6]}"
+    except ValueError:
+        return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S") + f"#{_new_id()[:6]}"
 
 def post_diaper(event):
+    session, err = _require_session(event)
+    if err: return err
+    hh_id = session.get("active_hh") or ""
+    _, mem_err = _require_member(session, hh_id)
+    if mem_err: return mem_err
     data = _parse_body(event)
-    diaper_type = data.get("type", "").lower()
-    if diaper_type not in ("pee", "poo"):
-        return _json_response({"ok": False, "error": "type must be pee or poo"}, 400)
-
-    token = _get_session_from_event(event)
-    session = _validate_session(token)
-    if session:
-        user_name = session["user_name"]
-    elif event.get("headers", {}).get("x-api-key") == PI_API_KEY:
-        user_name = "Pi"
-    else:
-        user_name = ""
-
-    now = _now_ct()
-    date_str = data.get("date", "").strip() or now.strftime("%Y-%m-%d %I:%M %p")
-    sk = now.strftime("%Y-%m-%d") + "#" + f"{time.time():.3f}"
-
+    dtype = (data.get("type") or "").strip().lower()
+    if dtype not in ("pee", "poo"):
+        return _json({"error": "type must be pee or poo"}, 400)
+    date_str = data.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d %I:%M %p")
+    sk = f"DIAPER#{_backfill_sk(date_str)}"
     table.put_item(Item={
-        "PK": "DIAPER_LOG",
-        "SK": sk,
-        "type": diaper_type,
-        "date": date_str,
-        "created_by": user_name,
+        "PK": f"HH#{hh_id}", "SK": sk,
+        "type": dtype, "date": date_str,
+        "created_by_uid": session["user_id"],
+        "created_by_name": _creator_name(session),
     })
-    return _json_response({"ok": True, "sk": sk})
-
-
-def delete_diaper(event):
-    sk = (event.get("pathParameters") or {}).get("sk", "")
-    if not sk:
-        return _json_response({"ok": False, "error": "missing sk"}, 400)
-    table.delete_item(Key={"PK": "DIAPER_LOG", "SK": sk})
-    return _json_response({"ok": True})
-
+    return _json({"ok": True, "sk": sk})
 
 def put_diaper(event):
-    sk = (event.get("pathParameters") or {}).get("sk", "")
-    if not sk:
-        return _json_response({"ok": False, "error": "missing sk"}, 400)
+    session, err = _require_session(event)
+    if err: return err
+    hh_id = session.get("active_hh") or ""
+    _, mem_err = _require_member(session, hh_id)
+    if mem_err: return mem_err
+    sk = event.get("pathParameters", {}).get("sk", "")
     data = _parse_body(event)
-    if "date" not in data:
-        return _json_response({"ok": False, "error": "nothing to update"}, 400)
+    updates, values, names = [], {}, {}
+    if "type" in data:
+        updates.append("#ty = :ty"); values[":ty"] = data["type"]; names["#ty"] = "type"
+    if "date" in data:
+        updates.append("#d = :d"); values[":d"] = data["date"]; names["#d"] = "date"
+    if not updates:
+        return _json({"error": "nothing to update"}, 400)
     try:
         table.update_item(
-            Key={"PK": "DIAPER_LOG", "SK": sk},
-            UpdateExpression="SET #d = :date",
-            ExpressionAttributeValues={":date": data["date"]},
-            ExpressionAttributeNames={"#d": "date"},
+            Key={"PK": f"HH#{hh_id}", "SK": sk},
+            UpdateExpression="SET " + ", ".join(updates),
+            ExpressionAttributeValues=values,
+            ExpressionAttributeNames=names,
             ConditionExpression="attribute_exists(PK)",
         )
-    except dynamodb.meta.client.exceptions.ConditionalCheckFailedException:
-        return _json_response({"ok": False, "error": "entry not found"}, 404)
-    return _json_response({"ok": True})
+    except _dynamodb.meta.client.exceptions.ConditionalCheckFailedException:
+        return _json({"error": "not found"}, 404)
+    return _json({"ok": True})
 
+def delete_diaper(event):
+    session, err = _require_session(event)
+    if err: return err
+    hh_id = session.get("active_hh") or ""
+    _, mem_err = _require_member(session, hh_id)
+    if mem_err: return mem_err
+    sk = event.get("pathParameters", {}).get("sk", "")
+    table.delete_item(Key={"PK": f"HH#{hh_id}", "SK": sk})
+    return _json({"ok": True})
 
 def post_nap(event):
+    session, err = _require_session(event)
+    if err: return err
+    hh_id = session.get("active_hh") or ""
+    _, mem_err = _require_member(session, hh_id)
+    if mem_err: return mem_err
     data = _parse_body(event)
-
-    token = _get_session_from_event(event)
-    session = _validate_session(token)
-    if session:
-        user_name = session["user_name"]
-    elif event.get("headers", {}).get("x-api-key") == PI_API_KEY:
-        user_name = "Pi"
-    else:
-        user_name = ""
-
-    now = _now_ct()
-    date_str = data.get("date", "").strip() or now.strftime("%Y-%m-%d %I:%M %p")
-    sk = now.strftime("%Y-%m-%d") + "#" + f"{time.time():.3f}"
-
+    date_str = data.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d %I:%M %p")
     item = {
-        "PK": "NAP_LOG",
-        "SK": sk,
+        "PK": f"HH#{hh_id}",
+        "SK": f"NAP#{_backfill_sk(date_str)}",
         "date": date_str,
-        "created_by": user_name,
+        "created_by_uid": session["user_id"],
+        "created_by_name": _creator_name(session),
     }
     if data.get("duration_mins") is not None:
         try:
             item["duration_mins"] = int(data["duration_mins"])
-        except (ValueError, TypeError):
+        except (TypeError, ValueError):
             pass
     table.put_item(Item=item)
-    return _json_response({"ok": True, "sk": sk})
-
-
-def delete_nap(event):
-    sk = (event.get("pathParameters") or {}).get("sk", "")
-    if not sk:
-        return _json_response({"ok": False, "error": "missing sk"}, 400)
-    table.delete_item(Key={"PK": "NAP_LOG", "SK": sk})
-    return _json_response({"ok": True})
-
+    return _json({"ok": True, "sk": item["SK"]})
 
 def put_nap(event):
-    sk = (event.get("pathParameters") or {}).get("sk", "")
-    if not sk:
-        return _json_response({"ok": False, "error": "missing sk"}, 400)
+    session, err = _require_session(event)
+    if err: return err
+    hh_id = session.get("active_hh") or ""
+    _, mem_err = _require_member(session, hh_id)
+    if mem_err: return mem_err
+    sk = event.get("pathParameters", {}).get("sk", "")
     data = _parse_body(event)
-
-    parts = []
-    values = {}
-    names = {}
+    updates, values, names = [], {}, {}
     if "date" in data:
-        parts.append("#d = :date")
-        values[":date"] = data["date"]
-        names["#d"] = "date"
+        updates.append("#d = :d"); values[":d"] = data["date"]; names["#d"] = "date"
     if "duration_mins" in data:
         if data["duration_mins"] is None:
-            parts.append("duration_mins = :dm")
-            values[":dm"] = None
+            updates.append("duration_mins = :nil"); values[":nil"] = None
         else:
-            try:
-                parts.append("duration_mins = :dm")
-                values[":dm"] = int(data["duration_mins"])
-            except (ValueError, TypeError):
-                return _json_response({"ok": False, "error": "invalid duration_mins"}, 400)
-
-    if not parts:
-        return _json_response({"ok": False, "error": "nothing to update"}, 400)
-
+            updates.append("duration_mins = :dm"); values[":dm"] = int(data["duration_mins"])
+    if not updates:
+        return _json({"error": "nothing to update"}, 400)
+    kwargs = {
+        "Key": {"PK": f"HH#{hh_id}", "SK": sk},
+        "UpdateExpression": "SET " + ", ".join(updates),
+        "ExpressionAttributeValues": values,
+        "ConditionExpression": "attribute_exists(PK)",
+    }
+    if names:
+        kwargs["ExpressionAttributeNames"] = names
     try:
-        kwargs = {
-            "Key": {"PK": "NAP_LOG", "SK": sk},
-            "UpdateExpression": "SET " + ", ".join(parts),
-            "ExpressionAttributeValues": values,
-            "ConditionExpression": "attribute_exists(PK)",
-        }
-        if names:
-            kwargs["ExpressionAttributeNames"] = names
         table.update_item(**kwargs)
-    except dynamodb.meta.client.exceptions.ConditionalCheckFailedException:
-        return _json_response({"ok": False, "error": "entry not found"}, 404)
-    return _json_response({"ok": True})
+    except _dynamodb.meta.client.exceptions.ConditionalCheckFailedException:
+        return _json({"error": "not found"}, 404)
+    return _json({"ok": True})
 
-
-def post_reset_timer(event):
-    _restore_state_from_log()
-    return _json_response({"ok": True})
-
+def delete_nap(event):
+    session, err = _require_session(event)
+    if err: return err
+    hh_id = session.get("active_hh") or ""
+    _, mem_err = _require_member(session, hh_id)
+    if mem_err: return mem_err
+    sk = event.get("pathParameters", {}).get("sk", "")
+    table.delete_item(Key={"PK": f"HH#{hh_id}", "SK": sk})
+    return _json({"ok": True})
 
 def post_settings(event):
+    session, err = _require_session(event)
+    if err: return err
+    hh_id = session.get("active_hh") or ""
+    _, mem_err = _require_member(session, hh_id)
+    if mem_err: return mem_err
     data = _parse_body(event)
-    settings = _get_settings()
-
+    current = _hh_settings(hh_id)
     if "countdown_secs" in data:
-        settings["countdown_secs"] = int(data["countdown_secs"])
-    if "ss_timeout_min" in data:
-        settings["ss_timeout_min"] = int(data["ss_timeout_min"])
+        current["countdown_secs"] = int(data["countdown_secs"])
     if "preset1_ml" in data:
-        settings["preset1_ml"] = max(10, min(500, int(data["preset1_ml"])))
+        current["preset1_ml"] = max(10, min(500, int(data["preset1_ml"])))
     if "preset2_ml" in data:
-        settings["preset2_ml"] = max(10, min(500, int(data["preset2_ml"])))
+        current["preset2_ml"] = max(10, min(500, int(data["preset2_ml"])))
+    if "ss_timeout_min" in data:
+        current["ss_timeout_min"] = int(data["ss_timeout_min"])
+    table.put_item(Item={"PK": f"HH#{hh_id}", "SK": "SETTINGS", **current})
+    return _json({"ok": True, "settings": current})
 
-    _put_settings(settings)
-    return _json_response({"ok": True, "settings": settings})
+def post_reset_timer(event):
+    session, err = _require_session(event)
+    if err: return err
+    hh_id = session.get("active_hh") or ""
+    _, mem_err = _require_member(session, hh_id)
+    if mem_err: return mem_err
+    _put_hh_timer(hh_id, 0.0, "", 0, False)
+    return _json({"ok": True})
 
+# ── Router ───────────────────────────────────────────────────────────────────
 
-# ── Lambda entry point ───────────────────────────────────────────────────────
+PUBLIC_ROUTES = [
+    ("GET",    r"^/api/auth/status$",             auth_status),
+    ("POST",   r"^/api/auth/register/start$",     auth_register_start),
+    ("POST",   r"^/api/auth/register/finish$",    auth_register_finish),
+    ("POST",   r"^/api/auth/login/options$",      auth_login_options),
+    ("POST",   r"^/api/auth/login/verify$",       auth_login_verify),
+    ("POST",   r"^/api/auth/recover/start$",      auth_recover_start),
+    ("POST",   r"^/api/auth/recover/finish$",     auth_recover_finish),
+    ("POST",   r"^/api/auth/logout$",             auth_logout),
+    ("GET",    r"^/api/invites/(?P<token>[^/]+)$", invite_preview),
+]
 
-# Auth routes (no session required)
-AUTH_ROUTES = {
-    "GET /api/auth/status": auth_status,
-    "POST /api/auth/login-options": auth_login_options,
-    "POST /api/auth/login-verify": auth_login_verify,
-    # Options are open — anyone can get a challenge; allowlist check is in register-verify
-    "POST /api/auth/register-options": auth_register_options,
-    "POST /api/auth/register-verify": auth_register_verify,
-}
+PROTECTED_ROUTES = [
+    ("GET",    r"^/api/households$",              households_list),
+    ("POST",   r"^/api/households$",              households_create),
+    ("POST",   r"^/api/households/switch$",       households_switch),
+    ("GET",    r"^/api/households/(?P<hh_id>[^/]+)/members$", household_members_list),
+    ("POST",   r"^/api/invites$",                 invite_create),
+    ("POST",   r"^/api/invites/(?P<token>[^/]+)/redeem$", invite_redeem),
+    ("GET",    r"^/api/state$",                   get_state),
+    ("POST",   r"^/api/start$",                   post_start_feeding),
+    ("POST",   r"^/api/feedings$",                post_feeding),
+    ("PUT",    r"^/api/feedings/(?P<sk>.+)$",     put_feeding),
+    ("DELETE", r"^/api/feedings/(?P<sk>.+)$",     delete_feeding),
+    ("POST",   r"^/api/diapers$",                 post_diaper),
+    ("PUT",    r"^/api/diapers/(?P<sk>.+)$",      put_diaper),
+    ("DELETE", r"^/api/diapers/(?P<sk>.+)$",      delete_diaper),
+    ("POST",   r"^/api/naps$",                    post_nap),
+    ("PUT",    r"^/api/naps/(?P<sk>.+)$",         put_nap),
+    ("DELETE", r"^/api/naps/(?P<sk>.+)$",         delete_nap),
+    ("POST",   r"^/api/settings$",                post_settings),
+    ("POST",   r"^/api/reset-timer$",             post_reset_timer),
+]
 
-# Protected routes (session required)
-PROTECTED_ROUTES = {
-    "GET /api/auth/credentials": auth_list_credentials,
-    "DELETE /api/auth/credentials/{cred_id}": auth_delete_credential,
-    "GET /api/auth/allowed-users": allowed_users_list,
-    "POST /api/auth/allowed-users": allowed_users_add,
-    "DELETE /api/auth/allowed-users/{name}": allowed_users_remove,
-    "GET /api/state": get_state,
-    "POST /api/start": post_start,
-    "POST /api/log": post_log,
-    "PUT /api/log/{sk}": put_log,
-    "DELETE /api/log/{sk}": delete_log,
-    "POST /api/reset-timer": post_reset_timer,
-    "POST /api/settings": post_settings,
-    "POST /api/weight": post_weight,
-    "POST /api/diaper": post_diaper,
-    "PUT /api/diaper/{sk}": put_diaper,
-    "DELETE /api/diaper/{sk}": delete_diaper,
-    "POST /api/nap": post_nap,
-    "PUT /api/nap/{sk}": put_nap,
-    "DELETE /api/nap/{sk}": delete_nap,
-}
-
+def _match_route(routes, method: str, path: str):
+    for m, pattern, handler in routes:
+        if m != method:
+            continue
+        match = re.match(pattern, path)
+        if match:
+            return handler, match.groupdict()
+    return None, None
 
 def lambda_handler(event, context):
-    route_key = event.get("routeKey", "")
+    http = event.get("requestContext", {}).get("http", {}) or {}
+    method = http.get("method", "").upper()
+    path = event.get("rawPath", "")
 
-    # Auth routes — no session needed
-    if route_key in AUTH_ROUTES:
+    # Inject path params from regex capture
+    def dispatch(handler, params):
+        event["pathParameters"] = {**(event.get("pathParameters") or {}), **params}
         try:
-            return AUTH_ROUTES[route_key](event)
+            return handler(event)
         except Exception as e:
-            return _json_response({"error": str(e)}, 500)
+            import traceback
+            traceback.print_exc()
+            return _json({"error": str(e)}, 500)
 
-    # Protected routes — require valid session
-    handler = PROTECTED_ROUTES.get(route_key)
-    if not handler:
-        return _json_response({"error": f"Unknown route: {route_key}"}, 404)
+    handler, params = _match_route(PUBLIC_ROUTES, method, path)
+    if handler:
+        return dispatch(handler, params)
 
-    # Check authentication (skip if no credentials registered yet — first-time setup)
-    if _has_any_credentials():
-        # Allow Pi access via API key header
-        api_key = event.get("headers", {}).get("x-api-key", "")
-        if PI_API_KEY and api_key == PI_API_KEY:
-            pass  # Pi is authorized
-        else:
-            token = _get_session_from_event(event)
-            if not _validate_session(token):
-                return _json_response({"error": "Unauthorized"}, 401)
+    handler, params = _match_route(PROTECTED_ROUTES, method, path)
+    if handler:
+        # Session check is handled inside each protected handler via _require_session.
+        return dispatch(handler, params)
 
-    try:
-        return handler(event)
-    except Exception as e:
-        return _json_response({"error": str(e)}, 500)
+    return _json({"error": f"Unknown route: {method} {path}"}, 404)

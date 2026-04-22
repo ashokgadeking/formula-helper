@@ -1,0 +1,99 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Formula Helper DEV stack (dev_auth branch) — Lambda + DynamoDB + HttpApi
+
+Parameters:
+  RpId:
+    Type: String
+    Default: "PLACEHOLDER"
+    Description: WebAuthn RP ID (API Gateway domain after first deploy)
+  RpOrigin:
+    Type: String
+    Default: "https://PLACEHOLDER"
+    Description: WebAuthn RP origin (https + RP ID)
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 15
+    MemorySize: 128
+
+Resources:
+  FormulaTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: FormulaHelper-dev
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  FormulaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: handler.lambda_handler
+      CodeUri: lambda/
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref FormulaTable
+          NTFY_TOPIC: bottle-expiry-dev
+          RP_ID: !Ref RpId
+          RP_ORIGIN: !Ref RpOrigin
+          PI_API_KEY: dev-disabled
+          VAPID_PRIVATE_KEY: dev-disabled
+          VAPID_PUBLIC_KEY: dev-disabled
+          STAGE: dev
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref FormulaTable
+      Events:
+        AnyApi:
+          Type: HttpApi
+          Properties:
+            Path: /{proxy+}
+            Method: ANY
+            ApiId: !Ref FormulaApi
+        Root:
+          Type: HttpApi
+          Properties:
+            Path: /
+            Method: ANY
+            ApiId: !Ref FormulaApi
+
+  FormulaApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: $default
+      CorsConfiguration:
+        AllowOrigins:
+          - "*"
+        AllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+          - Authorization
+        AllowCredentials: false
+
+Outputs:
+  ApiUrl:
+    Description: Dev API Gateway endpoint URL
+    Value: !Sub "https://${FormulaApi}.execute-api.${AWS::Region}.amazonaws.com"
+  ApiDomain:
+    Description: Dev API Gateway hostname (use as RP_ID)
+    Value: !Sub "${FormulaApi}.execute-api.${AWS::Region}.amazonaws.com"
+  TableName:
+    Value: !Ref FormulaTable
