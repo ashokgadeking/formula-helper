@@ -1,6 +1,5 @@
 import SwiftUI
 import UIKit
-@preconcurrency import ActivityKit
 
 enum Haptics {
     static func tap(_ style: UIImpactFeedbackGenerator.FeedbackStyle = .medium) {
@@ -24,6 +23,9 @@ struct ContentView: View {
                 MainView(vm: vm).task {
                     await vm.load()
                     await NotificationManager.shared.requestPermission()
+                    NotificationManager.shared.onActionComplete = { [weak vm] in
+                        await vm?.refresh()
+                    }
                 }
             }
         }
@@ -49,12 +51,8 @@ final class StateViewModel: ObservableObject {
     private(set) var avgDayRatePerMl: Double?
     private(set) var avgNightRatePerMl: Double?
     private var pollTask: Task<Void, Never>?
-    private var liveActivity: Activity<FormulaActivityAttributes>?
-    private var expiryTask: Task<Void, Never>?
 
     func load() async {
-        // Reconnect to any existing Live Activity from a previous session
-        liveActivity = Activity<FormulaActivityAttributes>.activities.first
         if let cached = CacheManager.shared.restore(), state == nil {
             state = cached; computeRates()
         }
@@ -67,13 +65,42 @@ final class StateViewModel: ObservableObject {
             let fresh = try await APIClient.shared.getState()
             state = fresh; CacheManager.shared.save(fresh); computeRates(); errorMessage = nil
             syncNotification()
-            await syncLiveActivity()
         } catch { if state == nil { errorMessage = error.localizedDescription } }
     }
 
     func startFeeding(ml: Int) async {
-        do { let _ = try await APIClient.shared.startFeeding(ml: ml); await refresh() }
-        catch { errorMessage = error.localizedDescription }
+        // Optimistic: update local state so the banner/timer renders immediately.
+        if var s = state {
+            let now = Date().timeIntervalSince1970
+            let secs = Double(s.settings.countdown_secs)
+            s.countdown_end = now + secs
+            s.remaining_secs = secs
+            s.expired = false
+            let f = DateFormatter(); f.dateFormat = "h:mm a"
+            s.mixed_at_str = f.string(from: Date())
+            s.mixed_ml = ml
+            let dateF = DateFormatter()
+            dateF.dateFormat = "yyyy-MM-dd hh:mm a"
+            dateF.locale = Locale(identifier: "en_US_POSIX")
+            let pending = LogEntry(
+                sk: "pending-\(UUID().uuidString)",
+                text: "\(ml)ml @ \(f.string(from: Date()))",
+                leftover: "",
+                ml: ml,
+                date: dateF.string(from: Date()),
+                created_by: ""
+            )
+            s.mix_log.append(pending)
+            state = s
+            syncNotification()
+        }
+        do {
+            let _ = try await APIClient.shared.startFeeding(ml: ml)
+            await refresh()
+        } catch {
+            errorMessage = error.localizedDescription
+            await refresh()
+        }
     }
 
     func logDiaper(type: String) async {
@@ -90,106 +117,8 @@ final class StateViewModel: ObservableObject {
         do {
             try await APIClient.shared.resetTimer()
             NotificationManager.shared.cancelExpiry()
-            await endLiveActivity()
             await refresh()
         } catch { errorMessage = error.localizedDescription }
-    }
-
-    private func syncLiveActivity() async {
-        guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
-        guard let end = state?.countdown_end, end > Date().timeIntervalSince1970 else {
-            // No active bottle — end every outstanding activity, not just the tracked one
-            for a in Activity<FormulaActivityAttributes>.activities {
-                await a.end(nil, dismissalPolicy: .immediate)
-            }
-            liveActivity = nil
-            expiryTask?.cancel(); expiryTask = nil
-            return
-        }
-        let endDate = Date(timeIntervalSince1970: end)
-
-        // Reconcile: keep one activity whose countdownEnd matches state, end any stragglers
-        var current: Activity<FormulaActivityAttributes>? = nil
-        for a in Activity<FormulaActivityAttributes>.activities {
-            let matches = a.activityState == .active
-                && abs(a.content.state.countdownEnd.timeIntervalSince(endDate)) < 1
-            if matches && current == nil {
-                current = a
-            } else {
-                await a.end(nil, dismissalPolicy: .immediate)
-            }
-        }
-        liveActivity = current
-
-        let secs = Double(state?.settings.countdown_secs ?? 3900)
-        let contentState = FormulaActivityAttributes.ContentState(
-            countdownEnd: endDate,
-            countdownStart: Date(timeIntervalSince1970: end - secs),
-            lastMl: state?.mix_log.last?.ml ?? 0
-        )
-        let staleDate = endDate.addingTimeInterval(120)
-        if let activity = liveActivity {
-            await activity.update(ActivityContent(state: contentState, staleDate: staleDate))
-        } else {
-            do {
-                liveActivity = try Activity.request(
-                    attributes: FormulaActivityAttributes(),
-                    content: ActivityContent(state: contentState, staleDate: staleDate)
-                )
-            } catch { /* ActivityKit unavailable or denied */ }
-        }
-        scheduleActivityExpiry(at: endDate)
-    }
-
-    /// Hand dismissal off to iOS so the pill disappears at expiry even if the app is backgrounded/killed.
-    /// After this call the activity can no longer be `update()`d, but the system will auto-dismiss at `endDate`.
-    func scheduleSystemDismissal() async {
-        guard let activity = liveActivity, activity.activityState == .active else { return }
-        let endDate = activity.content.state.countdownEnd
-        guard endDate > Date() else {
-            await activity.end(nil, dismissalPolicy: .immediate)
-            liveActivity = nil
-            return
-        }
-        let content = ActivityContent(state: activity.content.state, staleDate: endDate)
-        await activity.end(content, dismissalPolicy: .after(endDate))
-    }
-
-    private func endLiveActivity() async {
-        expiryTask?.cancel()
-        expiryTask = nil
-        await liveActivity?.end(dismissalPolicy: .immediate)
-        liveActivity = nil
-    }
-
-    // Called when the app becomes active — sweep expired activities and any duplicates.
-    func dismissExpiredActivityIfNeeded() async {
-        let all = Activity<FormulaActivityAttributes>.activities
-        let stateEnd = (state?.countdown_end).map { Date(timeIntervalSince1970: $0) }
-        var kept: Activity<FormulaActivityAttributes>? = nil
-        for activity in all {
-            let expired = activity.content.state.countdownEnd <= Date()
-            let matchesState = stateEnd.map {
-                abs(activity.content.state.countdownEnd.timeIntervalSince($0)) < 1
-            } ?? false
-            if expired || !matchesState || kept != nil {
-                await activity.end(nil, dismissalPolicy: .immediate)
-            } else {
-                kept = activity
-            }
-        }
-        liveActivity = kept
-    }
-
-    private func scheduleActivityExpiry(at end: Date) {
-        expiryTask?.cancel()
-        expiryTask = Task {
-            let delay = end.timeIntervalSinceNow
-            guard delay > 0 else { await endLiveActivity(); return }
-            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-            guard !Task.isCancelled else { return }
-            await endLiveActivity()
-        }
     }
 
     private func syncNotification() {
@@ -289,24 +218,6 @@ final class StateViewModel: ObservableObject {
         return f.date(from: s)
     }
 
-#if DEBUG
-    func debugStartLiveActivity() async {
-        let end = Date().addingTimeInterval(2 * 60)   // 2-min window for easy testing
-        let contentState = FormulaActivityAttributes.ContentState(
-            countdownEnd: end,
-            countdownStart: Date(),
-            lastMl: 120
-        )
-        do {
-            liveActivity = try Activity.request(
-                attributes: FormulaActivityAttributes(),
-                content: ActivityContent(state: contentState, staleDate: end.addingTimeInterval(120))
-            )
-            scheduleActivityExpiry(at: end)
-        } catch { print("LA error: \(error)") }
-    }
-#endif
-
     private func startPolling() {
         pollTask?.cancel()
         pollTask = Task {
@@ -366,18 +277,8 @@ struct RootTabView: View {
         .toolbarBackground(.visible, for: .tabBar)
         .tint(.white)
         .onChange(of: scenePhase) { _, phase in
-            switch phase {
-            case .active:
-                Task {
-                    await vm.dismissExpiredActivityIfNeeded()
-                    await vm.refresh()
-                }
-            case .background:
-                Task { await vm.scheduleSystemDismissal() }
-            case .inactive:
-                break
-            @unknown default:
-                break
+            if phase == .active {
+                Task { await vm.refresh() }
             }
         }
     }
@@ -402,16 +303,6 @@ struct FeedTab: View {
             .padding(.bottom, 24)
             .padding(.horizontal, 8)
 
-#if DEBUG
-            Button("▶ LA") { Task { await vm.debugStartLiveActivity() } }
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(Color.secondaryLabel)
-                .padding(.horizontal, 10).padding(.vertical, 6)
-                .background(Color.overlayBackground)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.separator, lineWidth: 1))
-                .padding(.leading, 20).padding(.bottom, 8)
-#endif
         }
         .sheet(isPresented: $showCustom) {
             AmountSheet(title: "Custom Amount", cta: "Start Feeding", isPresented: $showCustom,

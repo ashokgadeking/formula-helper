@@ -3,19 +3,19 @@ import Foundation
 // MARK: - State response from GET /api/state
 
 struct AppStateResponse: Codable {
-    let countdown_end: Double
-    let mixed_at_str: String
-    let mixed_ml: Int
-    let remaining_secs: Double
-    let expired: Bool
+    var countdown_end: Double
+    var mixed_at_str: String
+    var mixed_ml: Int
+    var remaining_secs: Double
+    var expired: Bool
     let ntfy_sent: Bool
-    let mix_log: [LogEntry]
+    var mix_log: [LogEntry]
     let settings: AppSettings
     let combos: [[Double]]
     let powder_per_60: Double
     let weight_log: [WeightEntry]
-    let diaper_log: [DiaperEntry]
-    let nap_log: [NapEntry]?
+    var diaper_log: [DiaperEntry]
+    var nap_log: [NapEntry]?
 }
 
 struct LogEntry: Codable, Identifiable {

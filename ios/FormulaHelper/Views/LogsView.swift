@@ -10,6 +10,7 @@ struct LogsView: View {
     @State private var selectedDate: String = ""   // "YYYY-MM-DD"
     @State private var tab: LogTab = .formula
     @State private var showAddSheet = false
+    @State private var expandedId: String?
 
     enum LogTab { case formula, diaper, nap }
 
@@ -136,7 +137,7 @@ struct LogsView: View {
                         } else {
                             List {
                                 ForEach(formulaEntries) { entry in
-                                    LogRow(entry: entry, vm: vm)
+                                    LogRow(entry: entry, vm: vm, expanded: binding(for: entry.sk))
                                         .listRowBackground(Color.clear)
                                         .listRowSeparator(.hidden)
                                         .listRowInsets(EdgeInsets(top: 3, leading: 0, bottom: 3, trailing: 0))
@@ -158,7 +159,7 @@ struct LogsView: View {
                         } else {
                             List {
                                 ForEach(diaperEntries) { entry in
-                                    DiaperRow(entry: entry, vm: vm)
+                                    DiaperRow(entry: entry, vm: vm, expanded: binding(for: entry.sk))
                                         .listRowBackground(Color.clear)
                                         .listRowSeparator(.hidden)
                                         .listRowInsets(EdgeInsets(top: 3, leading: 0, bottom: 3, trailing: 0))
@@ -180,7 +181,7 @@ struct LogsView: View {
                         } else {
                             List {
                                 ForEach(napEntries) { entry in
-                                    NapRow(entry: entry, vm: vm)
+                                    NapRow(entry: entry, vm: vm, expanded: binding(for: entry.sk))
                                         .listRowBackground(Color.clear)
                                         .listRowSeparator(.hidden)
                                         .listRowInsets(EdgeInsets(top: 3, leading: 0, bottom: 3, trailing: 0))
@@ -229,7 +230,7 @@ struct LogsView: View {
             .font(.system(size: 14, weight: .regular))
             .foregroundColor(Color.primaryLabel.opacity(0.5))
             .contentShape(Rectangle())
-            .onTapGesture { showAddSheet = true }
+            .onTapGesture { Haptics.tap(.light); showAddSheet = true }
             .accessibilityLabel("Add entry")
     }
 
@@ -263,6 +264,13 @@ struct LogsView: View {
     }
 
     // MARK: - Helpers
+
+    private func binding(for sk: String) -> Binding<Bool> {
+        Binding(
+            get: { expandedId == sk },
+            set: { expandedId = $0 ? sk : nil }
+        )
+    }
 
     private func initDate() {
         let dates = activeDates
@@ -300,7 +308,7 @@ struct LogsView: View {
 struct DiaperRow: View {
     let entry: DiaperEntry
     @ObservedObject var vm: StateViewModel
-    @State private var expanded = false
+    @Binding var expanded: Bool
     @State private var editDate = Date()
     @State private var saving = false
 
@@ -327,22 +335,33 @@ struct DiaperRow: View {
             HStack(spacing: 0) {
                 Rectangle().fill(fg.opacity(0.4)).frame(width: 3)
 
-                Text(label)
-                    .font(.outfit(14, weight: .semibold))
-                    .foregroundColor(fg)
-                    .padding(.horizontal, 12)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(label)
+                        .font(.outfit(16, weight: .semibold))
+                        .foregroundColor(fg)
+                    if !entry.created_by.isEmpty {
+                        Text("\(entry.created_by)")
+                            .font(.outfit(11))
+                            .foregroundColor(Color.tertiaryLabel)
+                    }
+                }
+                .padding(.leading, 12)
 
                 Spacer()
 
                 Text(timeStr)
-                    .font(.outfit(12))
+                    .font(.outfit(14))
                     .foregroundColor(Color.secondaryLabel)
                     .padding(.trailing, 14)
             }
             .frame(height: rowHeight)
             .background(Color.elevatedBackground)
             .contentShape(Rectangle())
+            .onTapGesture {
+                if expanded { withAnimation(.spring(duration: 0.2)) { expanded = false } }
+            }
             .onLongPressGesture(minimumDuration: 0.4) {
+                Haptics.tap(.medium)
                 editDate = parsedDate ?? Date()
                 withAnimation(.spring(duration: 0.2)) { expanded.toggle() }
             }
@@ -356,7 +375,9 @@ struct DiaperRow: View {
                     Spacer()
 
                     Button(saving ? "…" : "Save") {
-                        guard !saving else { return }; saving = true
+                        guard !saving else { return }
+                        Haptics.tap(.medium)
+                        saving = true
                         let f = DateFormatter()
                         f.dateFormat = "yyyy-MM-dd hh:mm a"
                         f.locale = Locale(identifier: "en_US_POSIX")
@@ -398,7 +419,7 @@ struct DiaperRow: View {
 struct NapRow: View {
     let entry: NapEntry
     @ObservedObject var vm: StateViewModel
-    @State private var expanded = false
+    @Binding var expanded: Bool
     @State private var editDate = Date()
     @State private var durationText = ""
     @State private var saving = false
@@ -432,26 +453,38 @@ struct NapRow: View {
             HStack(spacing: 0) {
                 Rectangle().fill(Color.purple.opacity(0.4)).frame(width: 3)
 
-                Text("Nap")
-                    .font(.outfit(14, weight: .semibold))
-                    .foregroundColor(Color.purple)
-                    .padding(.horizontal, 12)
-
-                Text(durationStr)
-                    .font(.outfit(12))
-                    .foregroundColor(entry.duration_mins != nil ? Color.primaryLabel : Color.tertiaryLabel)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 10) {
+                        Text("Nap")
+                            .font(.outfit(16, weight: .semibold))
+                            .foregroundColor(Color.purple)
+                        Text(durationStr)
+                            .font(.outfit(14))
+                            .foregroundColor(entry.duration_mins != nil ? Color.primaryLabel : Color.tertiaryLabel)
+                    }
+                    if !entry.created_by.isEmpty {
+                        Text("\(entry.created_by)")
+                            .font(.outfit(11))
+                            .foregroundColor(Color.tertiaryLabel)
+                    }
+                }
+                .padding(.leading, 12)
 
                 Spacer()
 
                 Text(timeStr)
-                    .font(.outfit(12))
+                    .font(.outfit(14))
                     .foregroundColor(Color.secondaryLabel)
                     .padding(.trailing, 14)
             }
             .frame(height: rowHeight)
             .background(Color.elevatedBackground)
             .contentShape(Rectangle())
+            .onTapGesture {
+                if expanded { withAnimation(.spring(duration: 0.2)) { expanded = false } }
+            }
             .onLongPressGesture(minimumDuration: 0.4) {
+                Haptics.tap(.medium)
                 editDate = parsedDate ?? Date()
                 durationText = entry.duration_mins.map(String.init) ?? ""
                 withAnimation(.spring(duration: 0.2)) { expanded.toggle() }
@@ -476,7 +509,9 @@ struct NapRow: View {
                             .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.opaqueSeparator, lineWidth: 1))
 
                         Button(saving ? "…" : "Save") {
-                            guard !saving else { return }; saving = true
+                            guard !saving else { return }
+                            Haptics.tap(.medium)
+                            saving = true
                             let f = DateFormatter()
                             f.dateFormat = "yyyy-MM-dd hh:mm a"
                             f.locale = Locale(identifier: "en_US_POSIX")
@@ -510,7 +545,7 @@ struct NapRow: View {
 struct LogRow: View {
     let entry: LogEntry
     @ObservedObject var vm: StateViewModel
-    @State private var expanded = false
+    @Binding var expanded: Bool
     @State private var leftover = ""
     @State private var mlText = ""
     @State private var editDate = Date()
@@ -531,33 +566,51 @@ struct LogRow: View {
         return out.string(from: d)
     }
 
+    /// Strips any unit suffix the user typed (e.g. "20ml" → "20"); nil if no digits.
+    var normalizedLeftover: String? {
+        let digits = entry.leftover.filter(\.isNumber)
+        return digits.isEmpty ? nil : digits
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
                 Rectangle().fill(Color.green.opacity(0.4)).frame(width: 3)
 
-                Text("\(entry.ml)ml")
-                    .font(.outfit(14, weight: .semibold))
-                    .foregroundColor(Color.green)
-                    .padding(.horizontal, 12)
-
-                if !entry.leftover.isEmpty {
-                    Text("\(entry.leftover) left")
-                        .font(.outfit(12))
-                        .foregroundColor(Color.yellow)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 10) {
+                        Text("\(entry.ml)ml")
+                            .font(.outfit(16, weight: .semibold))
+                            .foregroundColor(Color.green)
+                        if let lo = normalizedLeftover {
+                            Text("\(lo)ml left")
+                                .font(.outfit(14))
+                                .foregroundColor(Color.yellow)
+                        }
+                    }
+                    if !entry.created_by.isEmpty {
+                        Text("\(entry.created_by)")
+                            .font(.outfit(11))
+                            .foregroundColor(Color.tertiaryLabel)
+                    }
                 }
+                .padding(.leading, 12)
 
                 Spacer()
 
                 Text(timeStr)
-                    .font(.outfit(12))
+                    .font(.outfit(14))
                     .foregroundColor(Color.secondaryLabel)
                     .padding(.trailing, 14)
             }
             .frame(height: rowHeight)
             .background(Color.elevatedBackground)
             .contentShape(Rectangle())
+            .onTapGesture {
+                if expanded { withAnimation(.spring(duration: 0.2)) { expanded = false } }
+            }
             .onLongPressGesture(minimumDuration: 0.4) {
+                Haptics.tap(.medium)
                 mlText = String(entry.ml)
                 leftover = entry.leftover
                 editDate = parsedDate ?? Date()
@@ -576,20 +629,24 @@ struct LogRow: View {
                     HStack(spacing: 8) {
                         TextField("ml", text: $mlText)
                             .keyboardType(.numberPad).font(.outfit(14)).foregroundColor(Color.primaryLabel)
-                            .padding(.horizontal, 14).padding(.vertical, 12)
+                            .padding(.horizontal, 14)
+                            .frame(maxWidth: .infinity, minHeight: 44, maxHeight: 44)
                             .background(Color.primaryBackground)
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                             .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.opaqueSeparator, lineWidth: 1))
 
                         TextField("Leftover", text: $leftover)
                             .keyboardType(.numberPad).font(.outfit(14)).foregroundColor(Color.primaryLabel)
-                            .padding(.horizontal, 14).padding(.vertical, 12)
+                            .padding(.horizontal, 14)
+                            .frame(maxWidth: .infinity, minHeight: 44, maxHeight: 44)
                             .background(Color.primaryBackground)
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                             .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.opaqueSeparator, lineWidth: 1))
 
                         Button(saving ? "…" : "Save") {
-                            guard !saving else { return }; saving = true
+                            guard !saving else { return }
+                            Haptics.tap(.medium)
+                            saving = true
                             let newMl = Int(mlText.trimmingCharacters(in: .whitespaces)) ?? entry.ml
                             let dateStr = LogRow.parseFormatter.string(from: editDate)
                             let timeOnly: String = {
@@ -603,7 +660,7 @@ struct LogRow: View {
                                 try? await APIClient.shared.updateEntry(
                                     sk: entry.sk,
                                     text: newText,
-                                    leftover: leftover,
+                                    leftover: leftover.filter(\.isNumber),
                                     ml: newMl,
                                     date: dateStr
                                 )
@@ -754,7 +811,7 @@ struct ManualAddSheet: View {
                         .foregroundColor(Color.secondaryLabel)
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Add") { Task { await submit() } }
+                    Button("Add") { Haptics.tap(.medium); Task { await submit() } }
                         .disabled(submitting)
                 }
             }
