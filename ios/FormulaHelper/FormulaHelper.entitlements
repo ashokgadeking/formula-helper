@@ -6,6 +6,8 @@
 	<array>
 		<string>webcredentials:d20oyc88hlibbe.cloudfront.net</string>
 		<string>webcredentials:d20oyc88hlibbe.cloudfront.net?mode=developer</string>
+		<string>webcredentials:3lgqmzurih.execute-api.us-east-1.amazonaws.com</string>
+		<string>webcredentials:3lgqmzurih.execute-api.us-east-1.amazonaws.com?mode=developer</string>
 	</array>
 	<key>com.apple.security.application-groups</key>
 	<array>

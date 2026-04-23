@@ -1149,9 +1149,24 @@ def post_reset_timer(event):
     _put_hh_timer(hh_id, 0.0, "", 0, False)
     return _json({"ok": True})
 
+# ── Associated Domains (AASA) ────────────────────────────────────────────────
+
+def apple_app_site_association(event):
+    """Serve apple-app-site-association for webcredentials (passkey) RP association."""
+    team_id = os.environ.get("APPLE_TEAM_ID", "TV6FL9FHCE")
+    bundle_id = os.environ.get("APPLE_BUNDLE_ID", "com.ashokteja.formulahelper.dev")
+    body = json.dumps({"webcredentials": {"apps": [f"{team_id}.{bundle_id}"]}})
+    return {
+        "statusCode": 200,
+        "headers": {"Content-Type": "application/json", "Cache-Control": "public, max-age=3600"},
+        "body": body,
+    }
+
 # ── Router ───────────────────────────────────────────────────────────────────
 
 PUBLIC_ROUTES = [
+    ("GET",    r"^/\.well-known/apple-app-site-association$", apple_app_site_association),
+    ("GET",    r"^/apple-app-site-association$",              apple_app_site_association),
     ("GET",    r"^/api/auth/status$",             auth_status),
     ("POST",   r"^/api/auth/register/start$",     auth_register_start),
     ("POST",   r"^/api/auth/register/finish$",    auth_register_finish),

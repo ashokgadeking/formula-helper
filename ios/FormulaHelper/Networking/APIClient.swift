@@ -19,7 +19,13 @@ enum APIError: LocalizedError {
 actor APIClient {
     static let shared = APIClient()
 
-    static let baseURL = "https://d20oyc88hlibbe.cloudfront.net"
+    static let baseURL: String = {
+        #if DEV_STACK
+        return "https://3lgqmzurih.execute-api.us-east-1.amazonaws.com"
+        #else
+        return "https://d20oyc88hlibbe.cloudfront.net"
+        #endif
+    }()
 
     private let session: URLSession
 

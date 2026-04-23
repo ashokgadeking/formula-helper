@@ -53,6 +53,9 @@ Resources:
           VAPID_PRIVATE_KEY: dev-disabled
           VAPID_PUBLIC_KEY: dev-disabled
           STAGE: dev
+          APPLE_TEAM_ID: TV6FL9FHCE
+          APPLE_BUNDLE_ID: com.ashokteja.formulahelper
+          SIWA_AUDIENCE: com.ashokteja.formulahelper
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref FormulaTable

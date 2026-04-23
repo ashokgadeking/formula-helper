@@ -45,6 +45,7 @@ targets:
       configs:
         Debug:
           CODE_SIGN_STYLE: Automatic
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "DEBUG DEV_STACK"
         Release:
           CODE_SIGN_STYLE: Manual
           CODE_SIGN_IDENTITY: "Apple Distribution: ASHOK TEJA GADEPALLI (TV6FL9FHCE)"
@@ -56,6 +57,8 @@ targets:
         com.apple.developer.associated-domains:
           - webcredentials:d20oyc88hlibbe.cloudfront.net
           - webcredentials:d20oyc88hlibbe.cloudfront.net?mode=developer
+          - webcredentials:3lgqmzurih.execute-api.us-east-1.amazonaws.com
+          - webcredentials:3lgqmzurih.execute-api.us-east-1.amazonaws.com?mode=developer
         com.apple.security.application-groups:
           - group.com.ashokteja.formulahelper
     dependencies:
