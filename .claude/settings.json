@@ -1,0 +1,22 @@
+{
+  "env": {
+    "ASC_ISSUER_ID": "27f687d5-8112-4c07-8028-9eb390c30934",
+    "ASC_API_KEY": "V4A6S35VU5"
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "FILE=$(jq -r '.tool_input.file_path // \"\"' 2>/dev/null); echo \"$FILE\" | grep -q '/ios/.*\\.swift$' || exit 0; cd /Users/ashoktejagadepalli/Work/formula-helper/ios && xcodegen generate 2>&1 | tail -2 && xcodebuild -project FormulaHelper.xcodeproj -scheme FormulaHelper -destination 'id=7C6C84EE-AB35-4BA9-ACA3-388E9A2FD54E' -configuration Debug build 2>&1 | grep -E 'error:|BUILD SUCCEEDED|BUILD FAILED'; APP_PATH=$(find ~/Library/Developer/Xcode/DerivedData -name 'FormulaHelper.app' -path '*/Build/Products/Debug-iphonesimulator/*' 2>/dev/null | grep -v Index.noindex | head -1); [ -n \"$APP_PATH\" ] && xcrun simctl install 7C6C84EE-AB35-4BA9-ACA3-388E9A2FD54E \"$APP_PATH\" && xcrun simctl launch 7C6C84EE-AB35-4BA9-ACA3-388E9A2FD54E com.ashokteja.formulahelper 2>/dev/null; true",
+            "timeout": 180,
+            "async": true,
+            "statusMessage": "Building & deploying to simulator..."
+          }
+        ]
+      }
+    ]
+  }
+}

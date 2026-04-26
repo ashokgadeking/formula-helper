@@ -6,11 +6,16 @@ options:
   defaultConfig: Debug
   xcodeVersion: "16"
 
+configs:
+  Debug: debug
+  Release: release
+  DevRelease: release
+
 settings:
   base:
     SWIFT_VERSION: "6.0"
     MARKETING_VERSION: "1.0.0"
-    CURRENT_PROJECT_VERSION: "28"
+    CURRENT_PROJECT_VERSION: "37"
 
 targets:
   FormulaHelper:
@@ -23,6 +28,8 @@ targets:
     info:
       path: FormulaHelper/Info.plist
       properties:
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
@@ -31,36 +38,50 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
-        CFBundleDisplayName: Formula Helper
+        CFBundleDisplayName: $(APP_DISPLAY_NAME)
         ITSAppUsesNonExemptEncryption: false
         NSSupportsLiveActivities: true
+        APIBaseURL: $(API_BASE_URL)
+        RPID: $(RP_ID)
+        IsDevStack: $(IS_DEV_STACK)
         UIAppFonts:
           - Outfit-Variable.ttf
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.ashokteja.formulahelper
+        APP_DISPLAY_NAME: Formula Helper
         INFOPLIST_FILE: FormulaHelper/Info.plist
         DEVELOPMENT_TEAM: "TV6FL9FHCE"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
       configs:
         Debug:
+          PRODUCT_BUNDLE_IDENTIFIER: com.ashokteja.formulahelper
           CODE_SIGN_STYLE: Automatic
-          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "DEBUG DEV_STACK"
+          CODE_SIGN_ENTITLEMENTS: FormulaHelper/FormulaHelper.Dev.entitlements
+          API_BASE_URL: https://3lgqmzurih.execute-api.us-east-1.amazonaws.com
+          RP_ID: 3lgqmzurih.execute-api.us-east-1.amazonaws.com
+          IS_DEV_STACK: "YES"
         Release:
+          PRODUCT_BUNDLE_IDENTIFIER: com.ashokteja.formulahelper
           CODE_SIGN_STYLE: Manual
           CODE_SIGN_IDENTITY: "Apple Distribution: ASHOK TEJA GADEPALLI (TV6FL9FHCE)"
           PROVISIONING_PROFILE_SPECIFIER: FormulaHelperAppStore
           PROVISIONING_PROFILE: "0a11f570-f456-4eb4-a271-4a5198020e68"
-    entitlements:
-      path: FormulaHelper/FormulaHelper.entitlements
-      properties:
-        com.apple.developer.associated-domains:
-          - webcredentials:d20oyc88hlibbe.cloudfront.net
-          - webcredentials:d20oyc88hlibbe.cloudfront.net?mode=developer
-          - webcredentials:3lgqmzurih.execute-api.us-east-1.amazonaws.com
-          - webcredentials:3lgqmzurih.execute-api.us-east-1.amazonaws.com?mode=developer
-        com.apple.security.application-groups:
-          - group.com.ashokteja.formulahelper
+          CODE_SIGN_ENTITLEMENTS: FormulaHelper/FormulaHelper.Prod.entitlements
+          API_BASE_URL: https://d20oyc88hlibbe.cloudfront.net
+          RP_ID: d20oyc88hlibbe.cloudfront.net
+          IS_DEV_STACK: "NO"
+        DevRelease:
+          PRODUCT_BUNDLE_IDENTIFIER: com.ashokteja.formulahelper.dev
+          APP_DISPLAY_NAME: Formula Helper Dev
+          ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon-Dev
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: "Apple Distribution: ASHOK TEJA GADEPALLI (TV6FL9FHCE)"
+          PROVISIONING_PROFILE_SPECIFIER: AvantiLog Dev AppStore
+          PROVISIONING_PROFILE: "bb29651f-0741-4bf3-9504-551e54bca853"
+          CODE_SIGN_ENTITLEMENTS: FormulaHelper/FormulaHelper.Dev.entitlements
+          API_BASE_URL: https://3lgqmzurih.execute-api.us-east-1.amazonaws.com
+          RP_ID: 3lgqmzurih.execute-api.us-east-1.amazonaws.com
+          IS_DEV_STACK: "YES"
     dependencies:
       - sdk: Charts.framework
       - target: FormulaHelperWidgets
@@ -81,13 +102,20 @@ targets:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.ashokteja.formulahelper.widgets
         DEVELOPMENT_TEAM: "TV6FL9FHCE"
       configs:
         Debug:
+          PRODUCT_BUNDLE_IDENTIFIER: com.ashokteja.formulahelper.widgets
           CODE_SIGN_STYLE: Automatic
         Release:
+          PRODUCT_BUNDLE_IDENTIFIER: com.ashokteja.formulahelper.widgets
           CODE_SIGN_STYLE: Manual
           CODE_SIGN_IDENTITY: "Apple Distribution: ASHOK TEJA GADEPALLI (TV6FL9FHCE)"
           PROVISIONING_PROFILE_SPECIFIER: FormulaHelperWidgetsAppStore
           PROVISIONING_PROFILE: "efbe7ee5-50ea-4876-98f9-98a0300c043e"
+        DevRelease:
+          PRODUCT_BUNDLE_IDENTIFIER: com.ashokteja.formulahelper.dev.widgets
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: "Apple Distribution: ASHOK TEJA GADEPALLI (TV6FL9FHCE)"
+          PROVISIONING_PROFILE_SPECIFIER: AvantiLog Dev Widgets AppStore
+          PROVISIONING_PROFILE: "397a61d7-fcb1-4ad3-a672-284b1fea477e"

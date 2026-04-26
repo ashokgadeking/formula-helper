@@ -1,0 +1,72 @@
+{
+  "workflow_version": "1.2.0",
+  "timestamps": {
+    "started": "2026-04-24T02:00:00Z",
+    "last_updated": "2026-04-24T02:11:03Z",
+    "completed": "2026-04-24T02:11:03Z"
+  },
+  "mode": "initial_scan",
+  "scan_level": "deep",
+  "project_root": "/Users/ashoktejagadepalli/Work/formula-helper",
+  "project_knowledge": "/Users/ashoktejagadepalli/Work/formula-helper/docs",
+  "project_classification": {
+    "repository_type": "monorepo",
+    "documented_parts": 2,
+    "excluded_parts": 1,
+    "excluded_reason": "Raspberry Pi kiosk is personal-only and out of scope for the public AvantiLog rollout (per user memory)."
+  },
+  "project_types": [
+    {"part_id": "ios", "project_type_id": "mobile", "display_name": "iOS App (AvantiLog)"},
+    {"part_id": "lambda", "project_type_id": "backend", "display_name": "Serverless backend"}
+  ],
+  "completed_steps": [
+    {"step": "step_0.6", "status": "completed", "timestamp": "2026-04-24T02:00:00Z", "summary": "Initial scan, deep level chosen"},
+    {"step": "step_1", "status": "completed", "timestamp": "2026-04-24T02:02:00Z", "summary": "Classified as monorepo, 2 documented parts (ios, lambda), Pi excluded by user"},
+    {"step": "step_2", "status": "completed", "timestamp": "2026-04-24T02:03:00Z", "summary": "Existing docs inventoried: README.md, ios-prd.md, public_rollout_plan.md, TODO.md, ios/SETUP.md, ios/DESIGN_OVERHAUL.md"},
+    {"step": "step_3", "status": "completed", "timestamp": "2026-04-24T02:04:00Z", "summary": "Tech stack documented per part"},
+    {"step": "step_4", "status": "completed", "timestamp": "2026-04-24T02:06:00Z", "summary": "API + data model scans complete; api-contracts-lambda.md + data-models-lambda.md written"},
+    {"step": "step_5", "status": "completed", "timestamp": "2026-04-24T02:07:00Z", "summary": "Source tree documented"},
+    {"step": "step_6", "status": "completed", "timestamp": "2026-04-24T02:08:00Z", "summary": "Development and deployment guides written"},
+    {"step": "step_7", "status": "completed", "timestamp": "2026-04-24T02:09:00Z", "summary": "Integration architecture (iOS ↔ Lambda) documented"},
+    {"step": "step_8", "status": "completed", "timestamp": "2026-04-24T02:10:00Z", "summary": "Architecture docs written for both parts"},
+    {"step": "step_9", "status": "completed", "timestamp": "2026-04-24T02:10:30Z", "summary": "Supporting docs written (project-overview, component-inventory-ios, project-parts.json)"},
+    {"step": "step_10", "status": "completed", "timestamp": "2026-04-24T02:11:00Z", "summary": "Master index generated"},
+    {"step": "step_11", "status": "completed", "timestamp": "2026-04-24T02:11:03Z", "summary": "Validation complete; no (To be generated) markers"},
+    {"step": "step_12", "status": "completed", "timestamp": "2026-04-24T02:11:03Z", "summary": "Workflow complete"}
+  ],
+  "current_step": "completed",
+  "findings": {
+    "ios": {
+      "loc": 4006,
+      "key_files": ["FormulaHelperApp.swift", "Auth/AuthManager.swift", "Networking/APIClient.swift", "Models/AppState.swift", "Views/ContentView.swift", "Views/AuthView.swift", "Views/SettingsView.swift", "Views/LogsView.swift", "Views/TrendsView.swift"],
+      "framework": "SwiftUI",
+      "language": "Swift 6.0",
+      "min_os": "iOS 18.0"
+    },
+    "lambda": {
+      "loc": 1438,
+      "key_files": ["handler.py"],
+      "framework": "AWS Lambda + HTTP API",
+      "language": "Python 3.12",
+      "public_routes": 12,
+      "protected_routes": 25,
+      "data_store": "DynamoDB single-table (PK/SK)"
+    }
+  },
+  "outputs_generated": [
+    "docs/index.md",
+    "docs/project-overview.md",
+    "docs/architecture-ios.md",
+    "docs/architecture-lambda.md",
+    "docs/integration-architecture.md",
+    "docs/api-contracts-lambda.md",
+    "docs/data-models-lambda.md",
+    "docs/component-inventory-ios.md",
+    "docs/source-tree-analysis.md",
+    "docs/development-guide.md",
+    "docs/deployment-guide.md",
+    "docs/project-parts.json",
+    "docs/project-scan-report.json"
+  ],
+  "resume_instructions": "Workflow complete. To re-document, re-run /bmad-document-project and select option 1 (Re-scan entire project)."
+}

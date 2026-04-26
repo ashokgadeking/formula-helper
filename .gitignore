@@ -1,9 +1,9 @@
-# State files (local to each device)
-mix_log.json
-settings.json
-countdown_state.json
-backup_status.json
-weekly_ntfy_state.json
+# State files (local to each device — root-level only)
+/mix_log.json
+/settings.json
+/countdown_state.json
+/backup_status.json
+/weekly_ntfy_state.json
 
 # Python
 __pycache__/
@@ -32,7 +32,14 @@ samconfig.toml
 # Build artifacts
 lambda_backup.zip
 state_cache.json
+ios/build/
 
 # Baby files (user content)
 baby_files/
 exports/
+
+# App Store Connect API keys — must never be committed
+*.p8
+
+# Claude Code per-user settings
+.claude/settings.local.json

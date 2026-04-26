@@ -20,3 +20,9 @@
 ## General
 
 - [ ] Add basic authentication since the app binds to 0.0.0.0
+
+## Household
+
+- [ ] Notify owner when a user joins or leaves their household. Two flavors to decide between:
+  - **In-app**: surface on next app open (banner/badge). Needs a `notifications` list on `/auth/status` (or new endpoint) and an ack-on-view mechanism. No infra.
+  - **Push (APNs)**: real push while app closed. Needs APNs key in ASC, device-token registration endpoint, Lambda→APNs send path.

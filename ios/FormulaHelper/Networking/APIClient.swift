@@ -20,11 +20,12 @@ actor APIClient {
     static let shared = APIClient()
 
     static let baseURL: String = {
-        #if DEV_STACK
-        return "https://3lgqmzurih.execute-api.us-east-1.amazonaws.com"
-        #else
-        return "https://d20oyc88hlibbe.cloudfront.net"
-        #endif
+        Bundle.main.object(forInfoDictionaryKey: "APIBaseURL") as? String ?? ""
+    }()
+
+    /// RP ID used by ASAuthorizationPlatformPublicKeyCredentialProvider. Sourced from Info.plist (per-config build setting).
+    static let rpId: String = {
+        Bundle.main.object(forInfoDictionaryKey: "RPID") as? String ?? ""
     }()
 
     private let session: URLSession
@@ -49,22 +50,88 @@ actor APIClient {
         try await get("/api/auth/status")
     }
 
-    /// Returns raw JSON data so AuthManager can extract the challenge bytes
+    /// Returns raw JSON data — caller extracts `challenge_id` and the `options` sub-object for ASAuthorization
+    func registerStart(body: [String: Any]) async throws -> Data {
+        try await postRaw("/api/auth/register/start", body: body)
+    }
+
+    func registerFinish(body: [String: Any]) async throws -> AuthOkResponse {
+        try await post("/api/auth/register/finish", body: body)
+    }
+
     func loginOptions() async throws -> Data {
-        try await postRaw("/api/auth/login-options", body: [:])
+        try await postRaw("/api/auth/login/options", body: [:])
     }
 
-    func loginVerify(_ body: [String: Any]) async throws -> LoginVerifyResponse {
-        try await post("/api/auth/login-verify", body: body)
+    func loginVerify(body: [String: Any]) async throws -> AuthOkResponse {
+        try await post("/api/auth/login/verify", body: body)
     }
 
-    /// Returns raw JSON data (challenge + user info needed for registration request)
-    func registerOptions() async throws -> Data {
-        try await postRaw("/api/auth/register-options", body: [:])
+    func recoverStart(siwaIdToken: String) async throws -> Data {
+        try await postRaw("/api/auth/recover/start", body: ["siwa_id_token": siwaIdToken])
     }
 
-    func registerVerify(_ body: [String: Any]) async throws -> RegisterVerifyResponse {
-        try await post("/api/auth/register-verify", body: body)
+    func recoverFinish(body: [String: Any]) async throws -> AuthOkResponse {
+        try await post("/api/auth/recover/finish", body: body)
+    }
+
+    func logout() async throws {
+        let _: OkResponse = try await post("/api/auth/logout", body: [:])
+    }
+
+    func devLogin() async throws -> AuthOkResponse {
+        try await post("/api/auth/dev-login", body: [:])
+    }
+
+    // MARK: - Households
+
+    func listHouseholds() async throws -> HouseholdsListResponse {
+        try await get("/api/households")
+    }
+
+    func createHousehold(name: String) async throws -> OkResponse {
+        try await post("/api/households", body: ["name": name])
+    }
+
+    func switchHousehold(hhId: String) async throws -> OkResponse {
+        try await post("/api/households/switch", body: ["hh_id": hhId])
+    }
+
+    func leaveHousehold(hhId: String) async throws -> OkResponse {
+        try await post("/api/households/\(encodePathComponent(hhId))/leave", body: [:])
+    }
+
+    func deleteHousehold(hhId: String) async throws {
+        try await delete("/api/households/\(encodePathComponent(hhId))")
+    }
+
+    func listMembers(hhId: String) async throws -> HouseholdMembersResponse {
+        try await get("/api/households/\(encodePathComponent(hhId))/members")
+    }
+
+    func kickMember(hhId: String, userId: String) async throws {
+        try await delete("/api/households/\(encodePathComponent(hhId))/members/\(encodePathComponent(userId))")
+    }
+
+    func updateMemberRole(hhId: String, userId: String, role: String) async throws {
+        let _: OkResponse = try await put(
+            "/api/households/\(encodePathComponent(hhId))/members/\(encodePathComponent(userId))",
+            body: ["role": role]
+        )
+    }
+
+    // MARK: - Invites
+
+    func previewInvite(token: String) async throws -> InvitePreview {
+        try await get("/api/invites/\(encodePathComponent(token))")
+    }
+
+    func createInvite() async throws -> InviteCreateResponse {
+        try await post("/api/invites", body: [:])
+    }
+
+    func redeemInvite(token: String) async throws -> InviteRedeemResponse {
+        try await post("/api/invites/\(encodePathComponent(token))/redeem", body: [:])
     }
 
     // MARK: - Feeding
@@ -76,7 +143,7 @@ actor APIClient {
     func logEntry(ml: Int, date: String? = nil) async throws -> OkResponse {
         var body: [String: Any] = ["ml": ml]
         if let date { body["date"] = date }
-        return try await post("/api/log", body: body)
+        return try await post("/api/feedings", body: body)
     }
 
     func updateEntry(sk: String, text: String? = nil, leftover: String? = nil, ml: Int? = nil, date: String? = nil) async throws {
@@ -86,12 +153,12 @@ actor APIClient {
         if let ml { body["ml"] = ml }
         if let date { body["date"] = date }
         let encoded = encodePathComponent(sk)
-        let _: OkResponse = try await put("/api/log/\(encoded)", body: body)
+        let _: OkResponse = try await put("/api/feedings/\(encoded)", body: body)
     }
 
     func deleteEntry(sk: String) async throws {
         let encoded = encodePathComponent(sk)
-        try await delete("/api/log/\(encoded)")
+        try await delete("/api/feedings/\(encoded)")
     }
 
     // MARK: - Diaper
@@ -99,17 +166,17 @@ actor APIClient {
     func logDiaper(type: String, date: String? = nil) async throws {
         var body: [String: Any] = ["type": type]
         if let date { body["date"] = date }
-        let _: OkResponse = try await post("/api/diaper", body: body)
+        let _: OkResponse = try await post("/api/diapers", body: body)
     }
 
     func deleteDiaper(sk: String) async throws {
         let encoded = encodePathComponent(sk)
-        try await delete("/api/diaper/\(encoded)")
+        try await delete("/api/diapers/\(encoded)")
     }
 
     func updateDiaper(sk: String, date: String) async throws {
         let encoded = encodePathComponent(sk)
-        let _: OkResponse = try await put("/api/diaper/\(encoded)", body: ["date": date])
+        let _: OkResponse = try await put("/api/diapers/\(encoded)", body: ["date": date])
     }
 
     // MARK: - Nap
@@ -118,12 +185,12 @@ actor APIClient {
         var body: [String: Any] = [:]
         if let date { body["date"] = date }
         if let durationMins { body["duration_mins"] = durationMins }
-        let _: OkResponse = try await post("/api/nap", body: body)
+        let _: OkResponse = try await post("/api/naps", body: body)
     }
 
     func deleteNap(sk: String) async throws {
         let encoded = encodePathComponent(sk)
-        try await delete("/api/nap/\(encoded)")
+        try await delete("/api/naps/\(encoded)")
     }
 
     func updateNap(sk: String, date: String? = nil, durationMins: Int? = nil) async throws {
@@ -131,7 +198,7 @@ actor APIClient {
         if let date { body["date"] = date }
         if let durationMins { body["duration_mins"] = durationMins }
         let encoded = encodePathComponent(sk)
-        let _: OkResponse = try await put("/api/nap/\(encoded)", body: body)
+        let _: OkResponse = try await put("/api/naps/\(encoded)", body: body)
     }
 
     // MARK: - Timer
@@ -151,41 +218,6 @@ actor APIClient {
             "preset1_ml": preset1,
             "preset2_ml": preset2,
         ])
-    }
-
-    // MARK: - User management (ashok only)
-
-    func listAllowedUsers() async throws -> [String] {
-        struct R: Codable { let allowed_users: [String] }
-        let r: R = try await get("/api/auth/allowed-users")
-        return r.allowed_users
-    }
-
-    func addAllowedUser(name: String) async throws {
-        let _: OkResponse = try await post("/api/auth/allowed-users", body: ["name": name])
-    }
-
-    func removeAllowedUser(name: String) async throws {
-        let encoded = encodePathComponent(name)
-        try await delete("/api/auth/allowed-users/\(encoded)")
-    }
-
-    struct Credential: Codable, Identifiable {
-        let cred_id: String
-        let user_name: String
-        let created: String
-        var id: String { cred_id }
-    }
-
-    func listCredentials() async throws -> [Credential] {
-        struct R: Codable { let credentials: [Credential] }
-        let r: R = try await get("/api/auth/credentials")
-        return r.credentials
-    }
-
-    func deleteCredential(credId: String) async throws {
-        let encoded = encodePathComponent(credId)
-        try await delete("/api/auth/credentials/\(encoded)")
     }
 
     // MARK: - Private HTTP helpers
@@ -252,7 +284,7 @@ actor APIClient {
         URL(string: Self.baseURL + path)!
     }
 
-    private func encodePathComponent(_ s: String) -> String {
+    private nonisolated func encodePathComponent(_ s: String) -> String {
         s.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? s
     }
 }

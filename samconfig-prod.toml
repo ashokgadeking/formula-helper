@@ -1,0 +1,15 @@
+version = 0.1
+
+[default.global.parameters]
+profile = "viper"
+region = "us-east-1"
+
+[default.build.parameters]
+template_file = "template.yaml"
+
+[default.deploy.parameters]
+stack_name = "formula-helper"
+resolve_s3 = true
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = true
+fail_on_empty_changeset = false

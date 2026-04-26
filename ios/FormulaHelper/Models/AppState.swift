@@ -69,18 +69,65 @@ struct WeightEntry: Codable {
 
 struct AuthStatusResponse: Codable {
     let authenticated: Bool
-    let registered: Bool
-    let user_name: String
-}
-
-struct LoginVerifyResponse: Codable {
-    let ok: Bool
-    let user_name: String
-}
-
-struct RegisterVerifyResponse: Codable {
-    let ok: Bool
+    let user_id: String?
     let user_name: String?
+    let active_hh: String?
+}
+
+struct AuthOkResponse: Codable {
+    let ok: Bool
+    let user_id: String?
+    let active_hh: String?
+}
+
+/// Raw shape returned by register/start, login/options, recover/start
+struct ChallengeEnvelope: Codable {
+    let challenge_id: String
+    // `options` is decoded separately as raw JSON for passing to ASAuthorization
+}
+
+struct Household: Codable, Identifiable {
+    let hh_id: String
+    let name: String
+    let role: String
+
+    var id: String { hh_id }
+}
+
+struct HouseholdsListResponse: Codable {
+    let active_hh: String?
+    let households: [Household]
+}
+
+struct HouseholdMember: Codable, Identifiable, Equatable {
+    let user_id: String
+    let name: String
+    let role: String
+    let joined_at: String?
+
+    var id: String { user_id }
+}
+
+struct HouseholdMembersResponse: Codable {
+    let members: [HouseholdMember]
+}
+
+struct InvitePreview: Codable {
+    let hh_name: String
+    let inviter_name: String
+    let expires: Double
+}
+
+struct InviteCreateResponse: Codable {
+    let token: String
+    let expires: Double
+    let hh_name: String
+}
+
+struct InviteRedeemResponse: Codable {
+    let ok: Bool
+    let hh_id: String?
+    let hh_name: String?
 }
 
 // MARK: - Write responses

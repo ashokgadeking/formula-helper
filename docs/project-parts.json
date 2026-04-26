@@ -1,0 +1,65 @@
+{
+  "repository_type": "monorepo",
+  "documented_scope": ["ios", "lambda"],
+  "excluded_scope": ["pi"],
+  "parts": [
+    {
+      "part_id": "ios",
+      "display_name": "iOS App (AvantiLog)",
+      "root_path": "ios/",
+      "project_type_id": "mobile",
+      "primary_language": "swift",
+      "framework": "SwiftUI",
+      "deployment_target": "iOS 18",
+      "project_file": "ios/project.yml",
+      "configurations": ["Debug", "DevRelease", "Release"],
+      "bundle_ids": {
+        "prod": "com.ashokteja.formulahelper",
+        "dev": "com.ashokteja.formulahelper.dev"
+      },
+      "asc_app_ids": {
+        "dev": "6763331013"
+      }
+    },
+    {
+      "part_id": "lambda",
+      "display_name": "Serverless backend",
+      "root_path": "lambda/",
+      "project_type_id": "backend",
+      "primary_language": "python",
+      "framework": "AWS Lambda (HTTP API)",
+      "runtime": "python3.12",
+      "entry_point": "lambda/handler.py::lambda_handler",
+      "data_store": "DynamoDB (single-table, PK/SK)",
+      "auth_model": "WebAuthn passkey + SIWA recovery, cookie session",
+      "iac": "AWS SAM",
+      "templates": {
+        "dev": "template-dev.yaml",
+        "prod": "template.yaml"
+      },
+      "aws_profiles": {
+        "dev": "javelin",
+        "prod": "viper"
+      },
+      "deploy_script": "deploy.sh"
+    }
+  ],
+  "integration_points": [
+    {
+      "from": "ios",
+      "to": "lambda",
+      "type": "HTTPS JSON",
+      "session_mechanism": "cookie",
+      "rp_id_must_equal_host": true,
+      "prod_host": "d20oyc88hlibbe.cloudfront.net",
+      "dev_host": "3lgqmzurih.execute-api.us-east-1.amazonaws.com"
+    },
+    {
+      "from": "lambda",
+      "to": "apple",
+      "type": "JWKS fetch",
+      "url": "https://appleid.apple.com/auth/keys",
+      "purpose": "SIWA id_token verification"
+    }
+  ]
+}

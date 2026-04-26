@@ -153,12 +153,68 @@ def _require_session(event: dict):
         return None, _json({"error": "Unauthorized"}, 401)
     return s, None
 
-def _require_member(session: dict, hh_id: str):
-    """Verify session.user_id is a member of hh_id. Returns (member_item, error_response)."""
+def _require_member(session: dict, hh_id: str, allow_deleted: bool = False):
+    """Verify session.user_id is a member of hh_id and, unless allow_deleted=True, that
+    the household has not been soft-deleted. Returns (member_item, error_response).
+
+    `allow_deleted=True` is reserved for escape paths like /leave that must succeed even
+    on a tombstoned household so users can clear stale memberships from their session."""
     item = table.get_item(Key={"PK": f"HH#{hh_id}", "SK": f"MEMBER#{session['user_id']}"}).get("Item")
     if not item:
         return None, _json({"error": "Forbidden"}, 403)
+    if not allow_deleted:
+        hh = _get_household(hh_id)
+        if not hh or hh.get("deleted_at"):
+            return None, _json({"error": "Household not found"}, 404)
     return _decimal_to_native(item), None
+
+# Capability map — which roles can perform which actions. Add rows, don't migrate schema.
+ROLE_CAPS: dict[str, set[str]] = {
+    "owner":  {"invite", "kick", "change_role", "transfer_ownership", "delete_household", "log", "leave"},
+    "admin":  {"invite", "kick", "log", "leave"},
+    "member": {"log", "leave"},
+}
+
+def _can(role: str, action: str) -> bool:
+    return action in ROLE_CAPS.get((role or "").lower(), set())
+
+def _require_capability(session: dict, hh_id: str, action: str, allow_deleted: bool = False):
+    """Returns (member_item, error_response). 403 if not a member or role lacks action.
+    404 if household is soft-deleted (unless allow_deleted=True)."""
+    member, err = _require_member(session, hh_id, allow_deleted=allow_deleted)
+    if err:
+        return None, err
+    if not _can(member.get("role", ""), action):
+        return None, _json({"error": "Forbidden"}, 403)
+    return member, None
+
+def _remove_membership(hh_id: str, user_id: str):
+    """Drop both forward and mirror membership records."""
+    table.delete_item(Key={"PK": f"USER#{user_id}", "SK": f"HH#{hh_id}"})
+    table.delete_item(Key={"PK": f"HH#{hh_id}", "SK": f"MEMBER#{user_id}"})
+
+def _update_membership_role(hh_id: str, user_id: str, role: str):
+    """Update role on both forward and mirror records.
+
+    Refuses to upsert ghost rows: existing membership records are required (otherwise
+    a kicked user could be resurrected with a bare {role:...} item). Also enforces the
+    role whitelist directly so a misbehaving caller can't stamp arbitrary strings."""
+    if role not in ROLE_CAPS:
+        raise ValueError(f"Invalid role: {role!r}")
+    for key in ({"PK": f"USER#{user_id}", "SK": f"HH#{hh_id}"},
+                {"PK": f"HH#{hh_id}", "SK": f"MEMBER#{user_id}"}):
+        try:
+            table.update_item(
+                Key=key,
+                UpdateExpression="SET #r = :r",
+                ConditionExpression="attribute_exists(PK)",
+                ExpressionAttributeNames={"#r": "role"},
+                ExpressionAttributeValues={":r": role},
+            )
+        except table.meta.client.exceptions.ConditionalCheckFailedException:
+            # Membership row missing — caller's _require_capability check should have caught it.
+            # Skip silently rather than create a ghost.
+            continue
 
 # ── Challenges (per-session, short-lived) ────────────────────────────────────
 
@@ -262,7 +318,7 @@ def _list_credentials_for_user(user_id: str) -> list[dict]:
 
 # ── Households / memberships ─────────────────────────────────────────────────
 
-def _create_household(name: str, owner_uid: str) -> str:
+def _create_household(name: str, owner_uid: str, child_name: str = "", child_dob: str = "") -> str:
     hh_id = _new_id("h_")
     now = _iso_now()
     table.put_item(Item={
@@ -271,6 +327,8 @@ def _create_household(name: str, owner_uid: str) -> str:
         "hh_id": hh_id,
         "name": name,
         "owner_uid": owner_uid,
+        "child_name": child_name,
+        "child_dob": child_dob,
         "created_at": now,
     })
     _add_membership(hh_id, owner_uid, role="owner", hh_name=name)
@@ -387,6 +445,8 @@ def auth_register_start(event):
     user_name = (data.get("user_name") or "").strip()
     invite_token = data.get("invite_token") or ""
     household_name = (data.get("household_name") or "").strip()
+    child_name = (data.get("child_name") or "").strip()
+    child_dob = (data.get("child_dob") or "").strip()
 
     if not siwa_token or not user_name:
         return _json({"error": "siwa_id_token and user_name required"}, 400)
@@ -438,6 +498,8 @@ def auth_register_start(event):
             "user_name": user_name,
             "invite_token": invite_token,
             "household_name": household_name,
+            "child_name": child_name,
+            "child_dob": child_dob,
         },
     )
 
@@ -494,7 +556,12 @@ def auth_register_finish(event):
         hh_name = invite.get("hh_name", "")
         _add_membership(hh_id, user_id, role="member", hh_name=hh_name)
     else:
-        hh_id = _create_household(household_name, owner_uid=user_id)
+        hh_id = _create_household(
+            household_name,
+            owner_uid=user_id,
+            child_name=ctx.get("child_name") or "",
+            child_dob=ctx.get("child_dob") or "",
+        )
 
     token, _ = _create_session(user_id, active_hh=hh_id)
     return _json(
@@ -627,6 +694,43 @@ def auth_recover_finish(event):
         cookies=[_session_cookie(token)],
     )
 
+def auth_dev_login(event):
+    """Dev-only backdoor: mint a session for a synthetic user without SIWA/passkey.
+    The route itself is only registered on dev stages (see PUBLIC_ROUTES below);
+    a runtime guard is kept as defense in depth in case the route table is mis-edited."""
+    if STAGE != "dev":
+        return _json({"error": "Not found"}, 404)
+
+    user_id = "dev-sim-user"
+    user = _get_user(user_id)
+    if not user:
+        _put_user(user_id, apple_sub="dev-sim", name="Sim User", email="sim@example.invalid")
+
+    # Reuse an OWNED, NON-DELETED household if one exists; otherwise create a fresh
+    # Sim Household so the dev user always lands as owner (owner-gated UI testing).
+    hh_id = None
+    for m in _list_memberships(user_id):
+        if m.get("role") != "owner":
+            continue
+        hh = _get_household(m["hh_id"])
+        if not hh or hh.get("deleted_at"):
+            continue
+        hh_id = m["hh_id"]
+        break
+    if hh_id is None:
+        hh_id = _create_household(
+            "Sim Household",
+            owner_uid=user_id,
+            child_name="Sim Baby",
+            child_dob="2025-01-01",
+        )
+
+    token, _ = _create_session(user_id, active_hh=hh_id)
+    return _json(
+        {"ok": True, "user_id": user_id, "active_hh": hh_id},
+        cookies=[_session_cookie(token)],
+    )
+
 def auth_logout(event):
     token = _session_token_from_event(event)
     if token:
@@ -640,13 +744,14 @@ def households_list(event):
     if err:
         return err
     memberships = _list_memberships(session["user_id"])
-    return _json({
-        "active_hh": session.get("active_hh", ""),
-        "households": [
-            {"hh_id": m["hh_id"], "name": m.get("hh_name", ""), "role": m.get("role", "")}
-            for m in memberships
-        ],
-    })
+    # Filter out soft-deleted households
+    out = []
+    for m in memberships:
+        hh = _get_household(m["hh_id"])
+        if not hh or hh.get("deleted_at"):
+            continue
+        out.append({"hh_id": m["hh_id"], "name": m.get("hh_name", ""), "role": m.get("role", "")})
+    return _json({"active_hh": session.get("active_hh", ""), "households": out})
 
 def households_create(event):
     session, err = _require_session(event)
@@ -706,6 +811,200 @@ def household_members_list(event):
         })
     return _json({"members": out})
 
+def household_member_update(event):
+    """PUT /api/households/{hh_id}/members/{user_id} — change role. Owner only."""
+    session, err = _require_session(event)
+    if err:
+        return err
+    params = event.get("pathParameters", {}) or {}
+    hh_id = params.get("hh_id", "")
+    target_uid = params.get("user_id", "")
+    _, cap_err = _require_capability(session, hh_id, "change_role")
+    if cap_err:
+        return cap_err
+    data = _parse_body(event)
+    new_role = (data.get("role") or "").strip()
+    if new_role not in ROLE_CAPS:
+        return _json({"error": "Invalid role"}, 400)
+    if new_role == "owner":
+        return _json({"error": "Use /transfer to make someone owner"}, 400)
+    target = table.get_item(Key={"PK": f"HH#{hh_id}", "SK": f"MEMBER#{target_uid}"}).get("Item")
+    if not target:
+        return _json({"error": "Member not found"}, 404)
+    if target.get("role") == "owner":
+        return _json({"error": "Cannot demote owner directly; transfer ownership first"}, 400)
+    _update_membership_role(hh_id, target_uid, new_role)
+    return _json({"ok": True})
+
+def household_member_remove(event):
+    """DELETE /api/households/{hh_id}/members/{user_id} — kick."""
+    session, err = _require_session(event)
+    if err:
+        return err
+    params = event.get("pathParameters", {}) or {}
+    hh_id = params.get("hh_id", "")
+    target_uid = params.get("user_id", "")
+    actor, cap_err = _require_capability(session, hh_id, "kick")
+    if cap_err:
+        return cap_err
+    if target_uid == session["user_id"]:
+        return _json({"error": "Use /leave to remove yourself"}, 400)
+    target = table.get_item(Key={"PK": f"HH#{hh_id}", "SK": f"MEMBER#{target_uid}"}).get("Item")
+    if not target:
+        return _json({"error": "Member not found"}, 404)
+    if target.get("role") == "owner":
+        return _json({"error": "Cannot kick owner"}, 403)
+    # Admin cannot kick another admin
+    if actor.get("role") == "admin" and target.get("role") == "admin":
+        return _json({"error": "Admins cannot kick other admins"}, 403)
+    _remove_membership(hh_id, target_uid)
+    return _json({"ok": True})
+
+def household_leave(event):
+    """POST /api/households/{hh_id}/leave — current user leaves. Owner must transfer or delete first.
+    Permitted on soft-deleted households so users can shake stale memberships."""
+    session, err = _require_session(event)
+    if err:
+        return err
+    hh_id = (event.get("pathParameters", {}) or {}).get("hh_id", "")
+    member, cap_err = _require_capability(session, hh_id, "leave", allow_deleted=True)
+    if cap_err:
+        return cap_err
+    if member.get("role") == "owner":
+        # Owner of an alive household must transfer/delete first. If the household
+        # is already soft-deleted, allow the (formerly-)owner to leave like any member.
+        hh = _get_household(hh_id) or {}
+        if not hh.get("deleted_at"):
+            return _json({"error": "Transfer ownership or delete the household before leaving"}, 400)
+    _remove_membership(hh_id, session["user_id"])
+    # If they were actively in this household, pick a next viable membership for them.
+    if session.get("active_hh") == hh_id:
+        next_hh = ""
+        for m in _list_memberships(session["user_id"]):
+            if m["hh_id"] == hh_id:
+                continue
+            hh = _get_household(m["hh_id"])
+            if hh and not hh.get("deleted_at"):
+                next_hh = m["hh_id"]
+                break
+        token = _session_token_from_event(event)
+        table.update_item(
+            Key={"PK": f"SESS#{token}", "SK": "META"},
+            UpdateExpression="SET active_hh = :h",
+            ExpressionAttributeValues={":h": next_hh},
+        )
+    return _json({"ok": True})
+
+def household_transfer(event):
+    """POST /api/households/{hh_id}/transfer — owner transfers ownership to another member.
+    Current owner becomes admin. Atomic via TransactWriteItems so a partial failure can
+    never leave the household with zero or two owners."""
+    session, err = _require_session(event)
+    if err:
+        return err
+    hh_id = (event.get("pathParameters", {}) or {}).get("hh_id", "")
+    _, cap_err = _require_capability(session, hh_id, "transfer_ownership")
+    if cap_err:
+        return cap_err
+    data = _parse_body(event)
+    target_uid = (data.get("user_id") or "").strip()
+    if not target_uid or target_uid == session["user_id"]:
+        return _json({"error": "Invalid target"}, 400)
+    target = table.get_item(Key={"PK": f"HH#{hh_id}", "SK": f"MEMBER#{target_uid}"}).get("Item")
+    if not target:
+        return _json({"error": "Member not found"}, 404)
+    if target.get("role") == "owner":
+        return _json({"error": "Target is already owner"}, 400)
+
+    caller_uid = session["user_id"]
+    # Five conditional writes in a single transaction: promote target on both records,
+    # demote caller on both records, update HH META owner_uid. Each row's update is
+    # gated on its current role to make the transfer idempotent and race-safe.
+    try:
+        table.meta.client.transact_write_items(TransactItems=[
+            {"Update": {
+                "TableName": table.name,
+                "Key": {"PK": {"S": f"USER#{target_uid}"}, "SK": {"S": f"HH#{hh_id}"}},
+                "UpdateExpression": "SET #r = :owner",
+                "ConditionExpression": "attribute_exists(PK) AND #r = :member_or_admin_t",
+                "ExpressionAttributeNames": {"#r": "role"},
+                "ExpressionAttributeValues": {
+                    ":owner": {"S": "owner"},
+                    ":member_or_admin_t": {"S": target.get("role", "member")},
+                },
+            }},
+            {"Update": {
+                "TableName": table.name,
+                "Key": {"PK": {"S": f"HH#{hh_id}"}, "SK": {"S": f"MEMBER#{target_uid}"}},
+                "UpdateExpression": "SET #r = :owner",
+                "ConditionExpression": "attribute_exists(PK) AND #r = :member_or_admin_t",
+                "ExpressionAttributeNames": {"#r": "role"},
+                "ExpressionAttributeValues": {
+                    ":owner": {"S": "owner"},
+                    ":member_or_admin_t": {"S": target.get("role", "member")},
+                },
+            }},
+            {"Update": {
+                "TableName": table.name,
+                "Key": {"PK": {"S": f"USER#{caller_uid}"}, "SK": {"S": f"HH#{hh_id}"}},
+                "UpdateExpression": "SET #r = :admin",
+                "ConditionExpression": "attribute_exists(PK) AND #r = :owner",
+                "ExpressionAttributeNames": {"#r": "role"},
+                "ExpressionAttributeValues": {
+                    ":admin": {"S": "admin"},
+                    ":owner": {"S": "owner"},
+                },
+            }},
+            {"Update": {
+                "TableName": table.name,
+                "Key": {"PK": {"S": f"HH#{hh_id}"}, "SK": {"S": f"MEMBER#{caller_uid}"}},
+                "UpdateExpression": "SET #r = :admin",
+                "ConditionExpression": "attribute_exists(PK) AND #r = :owner",
+                "ExpressionAttributeNames": {"#r": "role"},
+                "ExpressionAttributeValues": {
+                    ":admin": {"S": "admin"},
+                    ":owner": {"S": "owner"},
+                },
+            }},
+            {"Update": {
+                "TableName": table.name,
+                "Key": {"PK": {"S": f"HH#{hh_id}"}, "SK": {"S": "META"}},
+                "UpdateExpression": "SET owner_uid = :u",
+                "ConditionExpression": "owner_uid = :caller",
+                "ExpressionAttributeValues": {
+                    ":u": {"S": target_uid},
+                    ":caller": {"S": caller_uid},
+                },
+            }},
+        ])
+    except table.meta.client.exceptions.TransactionCanceledException as e:
+        return _json({"error": "Transfer failed — household state changed; refresh and try again"}, 409)
+    return _json({"ok": True})
+
+def household_delete(event):
+    """DELETE /api/households/{hh_id} — soft-delete the household. Owner only."""
+    session, err = _require_session(event)
+    if err:
+        return err
+    hh_id = (event.get("pathParameters", {}) or {}).get("hh_id", "")
+    _, cap_err = _require_capability(session, hh_id, "delete_household")
+    if cap_err:
+        return cap_err
+    table.update_item(
+        Key={"PK": f"HH#{hh_id}", "SK": "META"},
+        UpdateExpression="SET deleted_at = :t",
+        ExpressionAttributeValues={":t": _iso_now()},
+    )
+    # Clear active_hh on caller's session if pointing here
+    if session.get("active_hh") == hh_id:
+        token = _session_token_from_event(event)
+        table.update_item(
+            Key={"PK": f"SESS#{token}", "SK": "META"},
+            UpdateExpression="SET active_hh = :e",
+            ExpressionAttributeValues={":e": ""},
+        )
+    return _json({"ok": True})
+
 # ── Invite handlers ──────────────────────────────────────────────────────────
 
 def invite_preview(event):
@@ -727,9 +1026,9 @@ def invite_create(event):
     hh_id = session.get("active_hh") or ""
     if not hh_id:
         return _json({"error": "No active household"}, 400)
-    _, mem_err = _require_member(session, hh_id)
-    if mem_err:
-        return mem_err
+    _, cap_err = _require_capability(session, hh_id, "invite")
+    if cap_err:
+        return cap_err
     hh = _get_household(hh_id) or {}
     inv = _create_invite(hh_id, hh.get("name", ""), inviter_uid=session["user_id"])
     return _json({
@@ -1178,11 +1477,24 @@ PUBLIC_ROUTES = [
     ("GET",    r"^/api/invites/(?P<token>[^/]+)$", invite_preview),
 ]
 
+# Register the dev-login bypass only on dev stages so it is not even reachable
+# (not just guarded) in prod. The runtime check inside the handler is kept as a
+# second layer of defense in case STAGE is ever misconfigured at deploy time.
+if STAGE == "dev":
+    PUBLIC_ROUTES.append(
+        ("POST", r"^/api/auth/dev-login$", auth_dev_login)
+    )
+
 PROTECTED_ROUTES = [
     ("GET",    r"^/api/households$",              households_list),
     ("POST",   r"^/api/households$",              households_create),
     ("POST",   r"^/api/households/switch$",       households_switch),
     ("GET",    r"^/api/households/(?P<hh_id>[^/]+)/members$", household_members_list),
+    ("PUT",    r"^/api/households/(?P<hh_id>[^/]+)/members/(?P<user_id>[^/]+)$", household_member_update),
+    ("DELETE", r"^/api/households/(?P<hh_id>[^/]+)/members/(?P<user_id>[^/]+)$", household_member_remove),
+    ("POST",   r"^/api/households/(?P<hh_id>[^/]+)/leave$",    household_leave),
+    ("POST",   r"^/api/households/(?P<hh_id>[^/]+)/transfer$", household_transfer),
+    ("DELETE", r"^/api/households/(?P<hh_id>[^/]+)$",          household_delete),
     ("POST",   r"^/api/invites$",                 invite_create),
     ("POST",   r"^/api/invites/(?P<token>[^/]+)/redeem$", invite_redeem),
     ("GET",    r"^/api/state$",                   get_state),
