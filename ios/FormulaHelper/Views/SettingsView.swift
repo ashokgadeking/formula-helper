@@ -13,6 +13,7 @@ struct SettingsView: View {
     @State private var showRedeemEntry = false
     @State private var redeemMessage: String?
     @State private var redeemError: String?
+    @AppStorage("dashboardLabelScale") private var dashboardLabelScale: Double = 1.0
 
     var body: some View {
         NavigationStack {
@@ -23,6 +24,7 @@ struct SettingsView: View {
                     householdSection
                     timerSection
                     presetsSection
+                    displaySection
                     accountSection
                     aboutSection
                 }
@@ -218,6 +220,56 @@ struct SettingsView: View {
 
     private var preset1: Int { vm.state?.settings.preset1_ml ?? 90 }
     private var preset2: Int { vm.state?.settings.preset2_ml ?? 120 }
+
+    // MARK: Display section
+
+    @ViewBuilder
+    private var displaySection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    SettingsRow(
+                        icon: "textformat.size",
+                        tint: .indigo,
+                        title: "Dashboard text size"
+                    )
+                    Spacer()
+                    Text(String(format: "%.0f%%", dashboardLabelScale * 100))
+                        .appFont(.footnote)
+                        .foregroundColor(Color.secondaryLabel)
+                        .monospacedDigit()
+                }
+
+                Slider(value: $dashboardLabelScale, in: 0.85...1.6, step: 0.05) {
+                    Text("Dashboard text size")
+                } minimumValueLabel: {
+                    Text("A").font(.custom("Outfit", size: 12)).foregroundColor(Color.secondaryLabel)
+                } maximumValueLabel: {
+                    Text("A").font(.custom("Outfit", size: 18)).foregroundColor(Color.secondaryLabel)
+                }
+                .tint(.indigo)
+
+                // Live preview so the slider is honest
+                Text("100ML MIXED AT 2:34 PM")
+                    .font(.custom("Outfit", size: 15 * dashboardLabelScale))
+                    .tracking(1.5)
+                    .foregroundColor(Color.secondaryLabel)
+                    .padding(.top, 2)
+                Text("EST. NEXT 6:42 PM")
+                    .font(.custom("Outfit", size: 17 * dashboardLabelScale))
+                    .tracking(1.2)
+                    .foregroundColor(Color.secondaryLabel)
+            }
+            .padding(.vertical, 4)
+            .listRowBackground(Color.elevatedBackground)
+        } header: {
+            Text("Display").foregroundColor(Color.secondaryLabel)
+        } footer: {
+            Text("Affects the lines above and below the bottle timer on the home screen.")
+                .appFont(.footnote)
+                .foregroundColor(Color.secondaryLabel)
+        }
+    }
 
     private var hasActiveBottle: Bool {
         guard let end = vm.state?.countdown_end else { return false }

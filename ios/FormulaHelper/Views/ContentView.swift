@@ -328,6 +328,10 @@ struct HeroCard: View {
 private struct BannerContent: View {
     @ObservedObject var vm: StateViewModel
     let now: Date   // driven by TimelineView — guarantees 1s re-render
+    @AppStorage("dashboardLabelScale") private var dashboardLabelScale: Double = 1.0
+
+    private var aboveTimerFont: Font { .custom("Outfit", size: 15 * dashboardLabelScale) }
+    private var belowTimerFont: Font { .custom("Outfit", size: 17 * dashboardLabelScale) }
 
     private var liveRemaining: Double {
         guard let end = vm.state?.countdown_end, end > 0 else { return -1 }
@@ -340,6 +344,23 @@ private struct BannerContent: View {
     }
 
     private var hasBottle: Bool { (vm.state?.countdown_end ?? 0) > 0 }
+
+    /// Seconds elapsed since the most recent bottle was mixed.
+    /// Derived from `countdown_end - countdown_secs` (the mix instant the server anchored to).
+    private var sinceMixedSecs: Double? {
+        guard let state = vm.state, state.countdown_end > 0 else { return nil }
+        let mixedAt = state.countdown_end - Double(state.settings.countdown_secs)
+        let elapsed = now.timeIntervalSince1970 - mixedAt
+        return elapsed > 0 ? elapsed : nil
+    }
+
+    private func formatSinceMixed(_ secs: Double) -> String {
+        let total = Int(secs)
+        let h = total / 3600
+        let m = (total % 3600) / 60
+        if h > 0 { return "\(h)h \(m)m since last bottle" }
+        return "\(m)m since last bottle"
+    }
 
     var body: some View {
         ZStack {
@@ -360,13 +381,19 @@ private struct BannerContent: View {
                             .font(.custom("Outfit", size: 72, relativeTo: .largeTitle).bold())
                             .foregroundColor(Color.tertiaryLabel)
                     } else if isExpired {
-                        subLabel("Bottle expired — mixed at \(state.mixed_at_str)", expired: true)
+                        Text("Bottle expired — mixed at \(state.mixed_at_str)".uppercased())
+                            .font(aboveTimerFont)
+                            .tracking(1.5)
+                            .foregroundColor(Color.red.opacity(0.7))
                         Text("DISCARD")
                             .font(.custom("Outfit", size: 52, relativeTo: .largeTitle).bold())
                             .foregroundColor(Color.red)
                             .tracking(-0.5)
                     } else {
-                        subLabel("\(state.mixed_ml)ml mixed at \(state.mixed_at_str)", expired: false)
+                        Text("\(state.mixed_ml)ml mixed at \(state.mixed_at_str)".uppercased())
+                            .font(aboveTimerFont)
+                            .tracking(1.5)
+                            .foregroundColor(Color.secondaryLabel)
                         Text(formatTimer(liveRemaining))
                             .font(.custom("Outfit", size: 72, relativeTo: .largeTitle).bold())
                             .foregroundColor(Color.green)
@@ -376,9 +403,17 @@ private struct BannerContent: View {
 
                     if let est = vm.nextFeedingEstimate {
                         Text(est)
-                            .appFont(.subheadline)
+                            .font(belowTimerFont)
                             .tracking(1.2)
                             .foregroundColor(isExpired ? Color.red.opacity(0.6) : Color.secondaryLabel)
+                            .padding(.top, 4)
+                    }
+
+                    if isExpired, let secs = sinceMixedSecs {
+                        Text(formatSinceMixed(secs))
+                            .font(belowTimerFont)
+                            .tracking(1.2)
+                            .foregroundColor(Color.red.opacity(0.6))
                             .padding(.top, 4)
                     }
                 } else {
