@@ -377,7 +377,10 @@ private struct BannerContent: View {
                             .font(.custom("Outfit", size: 72, relativeTo: .largeTitle).bold())
                             .foregroundColor(Color.tertiaryLabel)
                     } else if isExpired {
-                        subLabel("Bottle expired — mixed at \(state.mixed_at_str)", expired: true)
+                        Text("Bottle expired — mixed at \(state.mixed_at_str)".uppercased())
+                            .appFont(.subheadline)
+                            .tracking(1.5)
+                            .foregroundColor(Color.red.opacity(0.7))
                         Text("DISCARD")
                             .font(.custom("Outfit", size: 52, relativeTo: .largeTitle).bold())
                             .foregroundColor(Color.red)
@@ -393,7 +396,7 @@ private struct BannerContent: View {
 
                     if let est = vm.nextFeedingEstimate {
                         Text(est)
-                            .appFont(.subheadline)
+                            .appFont(isExpired ? .body : .subheadline)
                             .tracking(1.2)
                             .foregroundColor(isExpired ? Color.red.opacity(0.6) : Color.secondaryLabel)
                             .padding(.top, 4)
@@ -401,7 +404,7 @@ private struct BannerContent: View {
 
                     if isExpired, let secs = sinceMixedSecs {
                         Text(formatSinceMixed(secs))
-                            .appFont(.subheadline)
+                            .appFont(.body)
                             .tracking(1.2)
                             .foregroundColor(Color.red.opacity(0.6))
                             .padding(.top, 4)
