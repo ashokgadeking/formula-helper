@@ -1,0 +1,2777 @@
+diff --git a/TODO.md b/TODO.md
+index 84498d0..f383139 100644
+--- a/TODO.md
++++ b/TODO.md
+@@ -20,3 +20,9 @@
+ ## General
+ 
+ - [ ] Add basic authentication since the app binds to 0.0.0.0
++
++## Household
++
++- [ ] Notify owner when a user joins or leaves their household. Two flavors to decide between:
++  - **In-app**: surface on next app open (banner/badge). Needs a `notifications` list on `/auth/status` (or new endpoint) and an ack-on-view mechanism. No infra.
++  - **Push (APNs)**: real push while app closed. Needs APNs key in ASC, device-token registration endpoint, Lambda→APNs send path.
+diff --git a/ios/FormulaHelper/Auth/AuthManager.swift b/ios/FormulaHelper/Auth/AuthManager.swift
+index d16f124..1b7ffc7 100644
+--- a/ios/FormulaHelper/Auth/AuthManager.swift
++++ b/ios/FormulaHelper/Auth/AuthManager.swift
+@@ -2,12 +2,20 @@ import AuthenticationServices
+ import Foundation
+ import UIKit
+ 
++// MARK: - Signup draft
++
++struct SignUpDraft {
++    let siwaToken: String
++    let suggestedFirstName: String?
++    let email: String?
++}
++
+ // MARK: - State
+ 
+ enum AuthState: Equatable {
+     case loading
+-    case authenticated(userName: String)
+-    case unauthenticated(registered: Bool)   // registered = any passkey exists
++    case authenticated(userName: String, userId: String, activeHh: String?)
++    case unauthenticated
+ 
+     var isAuthenticated: Bool {
+         if case .authenticated = self { return true }
+@@ -15,7 +23,17 @@ enum AuthState: Equatable {
+     }
+ 
+     var userName: String? {
+-        if case .authenticated(let name) = self { return name }
++        if case .authenticated(let name, _, _) = self { return name }
++        return nil
++    }
++
++    var userId: String? {
++        if case .authenticated(_, let id, _) = self { return id }
++        return nil
++    }
++
++    var activeHouseholdId: String? {
++        if case .authenticated(_, _, let hh) = self { return hh }
+         return nil
+     }
+ }
+@@ -26,12 +44,16 @@ enum AuthError: LocalizedError {
+     case invalidCredential
+     case missingChallenge
+     case cancelled
++    case missingSiwaToken
++    case missingDetails(String)
+ 
+     var errorDescription: String? {
+         switch self {
+         case .invalidCredential: return "Unexpected credential type from authenticator"
+         case .missingChallenge:  return "Challenge missing from server response"
+         case .cancelled:         return "Sign-in was cancelled"
++        case .missingSiwaToken:  return "Apple didn't return an identity token"
++        case .missingDetails(let m): return m
+         }
+     }
+ }
+@@ -52,25 +74,114 @@ final class AuthManager: NSObject, ObservableObject {
+         do {
+             let status = try await APIClient.shared.authStatus()
+             if status.authenticated {
+-                authState = .authenticated(userName: status.user_name)
++                authState = .authenticated(
++                    userName: status.user_name ?? "",
++                    userId: status.user_id ?? "",
++                    activeHh: status.active_hh
++                )
+             } else {
+-                authState = .unauthenticated(registered: status.registered)
++                authState = .unauthenticated
+             }
+         } catch {
+-            authState = .unauthenticated(registered: false)
++            authState = .unauthenticated
+         }
+     }
+ 
++    /// Passkey login. Server picks the credential via resident-key discovery.
+     func signIn() async throws {
+-        let rawOptions = try await APIClient.shared.loginOptions()
+-        let options = try JSONSerialization.jsonObject(with: rawOptions) as? [String: Any]
+-            ?? [:]
++        let raw = try await APIClient.shared.loginOptions()
++        let (challengeId, options) = try parseEnvelope(raw)
++
++        let credential = try await performAssertion(options: options)
++        let body: [String: Any] = [
++            "challenge_id": challengeId,
++            "credential": webauthnAssertionJSON(credential),
++        ]
++        let result = try await APIClient.shared.loginVerify(body: body)
++        await syncAfterAuth(ok: result)
++    }
++
++    /// First step of signup: show Apple sheet, return a draft the UI uses to pre-fill the paged flow.
++    func beginSignUp() async throws -> SignUpDraft {
++        let (token, name, email) = try await requestSiwaCredential()
++        return SignUpDraft(siwaToken: token, suggestedFirstName: name, email: email)
++    }
++
++    /// Second step: finish signup — calls register/start then register/finish (passkey).
++    /// Pass `householdName` + child info for a new household, or `inviteToken` to join one.
++    func completeSignUp(
++        draft: SignUpDraft,
++        userName: String,
++        householdName: String?,
++        childName: String?,
++        childDob: String?,
++        inviteToken: String?
++    ) async throws {
++        var body: [String: Any] = [
++            "siwa_id_token": draft.siwaToken,
++            "user_name": userName,
++        ]
++        if let h = householdName, !h.isEmpty { body["household_name"] = h }
++        if let c = childName, !c.isEmpty { body["child_name"] = c }
++        if let d = childDob, !d.isEmpty { body["child_dob"] = d }
++        if let t = inviteToken, !t.isEmpty { body["invite_token"] = t }
++
++        let raw = try await APIClient.shared.registerStart(body: body)
++        let (challengeId, options) = try parseEnvelope(raw)
++
++        let credential = try await performRegistration(options: options, userName: userName)
++        let finishBody: [String: Any] = [
++            "challenge_id": challengeId,
++            "credential": webauthnAttestationJSON(credential),
++        ]
++        let result = try await APIClient.shared.registerFinish(body: finishBody)
++        await syncAfterAuth(ok: result)
++    }
++
++    /// SIWA-based recovery: issues a new passkey for the existing account.
++    func recover() async throws {
++        let (siwaToken, _, _) = try await requestSiwaCredential()
++        let raw = try await APIClient.shared.recoverStart(siwaIdToken: siwaToken)
++        let (challengeId, options) = try parseEnvelope(raw)
++
++        let userName = (options["user"] as? [String: Any])?["name"] as? String ?? "account"
++        let credential = try await performRegistration(options: options, userName: userName)
++        let body: [String: Any] = [
++            "challenge_id": challengeId,
++            "credential": webauthnAttestationJSON(credential),
++        ]
++        let result = try await APIClient.shared.recoverFinish(body: body)
++        await syncAfterAuth(ok: result)
++    }
++
++    func logout() async {
++        try? await APIClient.shared.logout()
++        authState = .unauthenticated
++    }
+ 
++    // MARK: - Private: envelope parsing
++
++    private func parseEnvelope(_ data: Data) throws -> (String, [String: Any]) {
++        guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],
++              let cid = obj["challenge_id"] as? String,
++              let options = obj["options"] as? [String: Any]
++        else { throw AuthError.missingChallenge }
++        return (cid, options)
++    }
++
++    private func syncAfterAuth(ok: AuthOkResponse) async {
++        // Pull fresh status so we have user_name populated
++        await checkStatus()
++    }
++
++    // MARK: - Private: WebAuthn (passkey)
++
++    private func performAssertion(options: [String: Any]) async throws -> ASAuthorizationPlatformPublicKeyCredentialAssertion {
+         guard let challengeStr = options["challenge"] as? String,
+               let challenge = Data(base64URLEncoded: challengeStr)
+         else { throw AuthError.missingChallenge }
+ 
+-        let rpId = options["rpId"] as? String ?? "d20oyc88hlibbe.cloudfront.net"
++        let rpId = (options["rpId"] as? String) ?? APIClient.rpId
+ 
+         let provider = ASAuthorizationPlatformPublicKeyCredentialProvider(
+             relyingPartyIdentifier: rpId
+@@ -81,34 +192,19 @@ final class AuthManager: NSObject, ObservableObject {
+         guard let credential = authorization.credential
+                 as? ASAuthorizationPlatformPublicKeyCredentialAssertion
+         else { throw AuthError.invalidCredential }
+-
+-        let body: [String: Any] = [
+-            "id":     credential.credentialID.base64URLEncoded,
+-            "rawId":  credential.credentialID.base64URLEncoded,
+-            "type":   "public-key",
+-            "response": [
+-                "clientDataJSON":    credential.rawClientDataJSON.base64URLEncoded,
+-                "authenticatorData": credential.rawAuthenticatorData.base64URLEncoded,
+-                "signature":         credential.signature.base64URLEncoded,
+-                "userHandle":        credential.userID.base64URLEncoded,
+-            ]
+-        ]
+-
+-        let result = try await APIClient.shared.loginVerify(body)
+-        authState = .authenticated(userName: result.user_name)
++        return credential
+     }
+ 
+-    func register(userName: String) async throws {
+-        let rawOptions = try await APIClient.shared.registerOptions()
+-        let options = try JSONSerialization.jsonObject(with: rawOptions) as? [String: Any]
+-            ?? [:]
+-
++    private func performRegistration(
++        options: [String: Any],
++        userName: String
++    ) async throws -> ASAuthorizationPlatformPublicKeyCredentialRegistration {
+         guard let challengeStr = options["challenge"] as? String,
+               let challenge = Data(base64URLEncoded: challengeStr)
+         else { throw AuthError.missingChallenge }
+ 
+         let rp = options["rp"] as? [String: Any] ?? [:]
+-        let rpId = rp["id"] as? String ?? "d20oyc88hlibbe.cloudfront.net"
++        let rpId = (rp["id"] as? String) ?? APIClient.rpId
+ 
+         let user = options["user"] as? [String: Any] ?? [:]
+         let userIdStr = user["id"] as? String ?? ""
+@@ -127,27 +223,53 @@ final class AuthManager: NSObject, ObservableObject {
+         guard let credential = authorization.credential
+                 as? ASAuthorizationPlatformPublicKeyCredentialRegistration
+         else { throw AuthError.invalidCredential }
++        return credential
++    }
+ 
+-        guard let attestationObject = credential.rawAttestationObject else {
+-            throw AuthError.invalidCredential
+-        }
++    private func webauthnAssertionJSON(_ c: ASAuthorizationPlatformPublicKeyCredentialAssertion) -> [String: Any] {
++        [
++            "id":    c.credentialID.base64URLEncoded,
++            "rawId": c.credentialID.base64URLEncoded,
++            "type":  "public-key",
++            "response": [
++                "clientDataJSON":    c.rawClientDataJSON.base64URLEncoded,
++                "authenticatorData": c.rawAuthenticatorData.base64URLEncoded,
++                "signature":         c.signature.base64URLEncoded,
++                "userHandle":        c.userID.base64URLEncoded,
++            ],
++        ]
++    }
+ 
+-        let body: [String: Any] = [
+-            "id":        credential.credentialID.base64URLEncoded,
+-            "rawId":     credential.credentialID.base64URLEncoded,
+-            "type":      "public-key",
++    private func webauthnAttestationJSON(_ c: ASAuthorizationPlatformPublicKeyCredentialRegistration) -> [String: Any] {
++        [
++            "id":    c.credentialID.base64URLEncoded,
++            "rawId": c.credentialID.base64URLEncoded,
++            "type":  "public-key",
+             "response": [
+-                "clientDataJSON":   credential.rawClientDataJSON.base64URLEncoded,
+-                "attestationObject": attestationObject.base64URLEncoded,
++                "clientDataJSON":    c.rawClientDataJSON.base64URLEncoded,
++                "attestationObject": (c.rawAttestationObject ?? Data()).base64URLEncoded,
+             ],
+-            "user_name": userName,
+         ]
++    }
++
++    // MARK: - Private: Sign in with Apple
++
++    private func requestSiwaCredential() async throws -> (token: String, firstName: String?, email: String?) {
++        let provider = ASAuthorizationAppleIDProvider()
++        let request = provider.createRequest()
++        request.requestedScopes = [.fullName, .email]
++
++        let authorization = try await perform(request: request)
++        guard let cred = authorization.credential as? ASAuthorizationAppleIDCredential,
++              let tokenData = cred.identityToken,
++              let token = String(data: tokenData, encoding: .utf8)
++        else { throw AuthError.missingSiwaToken }
+ 
+-        let result = try await APIClient.shared.registerVerify(body)
+-        authState = .authenticated(userName: result.user_name ?? userName)
++        let firstName = cred.fullName?.givenName
++        return (token, firstName, cred.email)
+     }
+ 
+-    // MARK: - Private
++    // MARK: - Private: common controller wrapper
+ 
+     private func perform(request: ASAuthorizationRequest) async throws -> ASAuthorization {
+         try await withCheckedThrowingContinuation { cont in
+diff --git a/ios/FormulaHelper/FormulaHelper.entitlements b/ios/FormulaHelper/FormulaHelper.entitlements
+deleted file mode 100644
+index bc03971..0000000
+--- a/ios/FormulaHelper/FormulaHelper.entitlements
++++ /dev/null
+@@ -1,17 +0,0 @@
+-<?xml version="1.0" encoding="UTF-8"?>
+-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+-<plist version="1.0">
+-<dict>
+-	<key>com.apple.developer.associated-domains</key>
+-	<array>
+-		<string>webcredentials:d20oyc88hlibbe.cloudfront.net</string>
+-		<string>webcredentials:d20oyc88hlibbe.cloudfront.net?mode=developer</string>
+-		<string>webcredentials:3lgqmzurih.execute-api.us-east-1.amazonaws.com</string>
+-		<string>webcredentials:3lgqmzurih.execute-api.us-east-1.amazonaws.com?mode=developer</string>
+-	</array>
+-	<key>com.apple.security.application-groups</key>
+-	<array>
+-		<string>group.com.ashokteja.formulahelper</string>
+-	</array>
+-</dict>
+-</plist>
+diff --git a/ios/FormulaHelper/FormulaHelperApp.swift b/ios/FormulaHelper/FormulaHelperApp.swift
+index 0a10662..8164007 100644
+--- a/ios/FormulaHelper/FormulaHelperApp.swift
++++ b/ios/FormulaHelper/FormulaHelperApp.swift
+@@ -3,19 +3,12 @@ import SwiftUI
+ @main
+ struct FormulaHelperApp: App {
+     @StateObject private var auth = AuthManager.shared
+-    @StateObject private var users = UserStore.shared
+ 
+     var body: some Scene {
+         WindowGroup {
+             ContentView()
+                 .environmentObject(auth)
+-                .environmentObject(users)
+                 .preferredColorScheme(.dark)
+-                .task(id: auth.authState) {
+-                    if auth.authState.userName == "ashok" {
+-                        await users.load()
+-                    }
+-                }
+         }
+     }
+ }
+diff --git a/ios/FormulaHelper/Info.plist b/ios/FormulaHelper/Info.plist
+index a744018..9b70398 100644
+--- a/ios/FormulaHelper/Info.plist
++++ b/ios/FormulaHelper/Info.plist
+@@ -2,10 +2,12 @@
+ <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+ <plist version="1.0">
+ <dict>
++	<key>APIBaseURL</key>
++	<string>$(API_BASE_URL)</string>
+ 	<key>CFBundleDevelopmentRegion</key>
+ 	<string>$(DEVELOPMENT_LANGUAGE)</string>
+ 	<key>CFBundleDisplayName</key>
+-	<string>Formula Helper</string>
++	<string>$(APP_DISPLAY_NAME)</string>
+ 	<key>CFBundleExecutable</key>
+ 	<string>$(EXECUTABLE_NAME)</string>
+ 	<key>CFBundleIdentifier</key>
+@@ -17,13 +19,17 @@
+ 	<key>CFBundlePackageType</key>
+ 	<string>APPL</string>
+ 	<key>CFBundleShortVersionString</key>
+-	<string>1.0</string>
++	<string>$(MARKETING_VERSION)</string>
+ 	<key>CFBundleVersion</key>
+-	<string>1</string>
++	<string>$(CURRENT_PROJECT_VERSION)</string>
+ 	<key>ITSAppUsesNonExemptEncryption</key>
+ 	<false/>
++	<key>IsDevStack</key>
++	<string>$(IS_DEV_STACK)</string>
+ 	<key>NSSupportsLiveActivities</key>
+ 	<true/>
++	<key>RPID</key>
++	<string>$(RP_ID)</string>
+ 	<key>UIAppFonts</key>
+ 	<array>
+ 		<string>Outfit-Variable.ttf</string>
+diff --git a/ios/FormulaHelper/Models/AppState.swift b/ios/FormulaHelper/Models/AppState.swift
+index 4543029..0a84828 100644
+--- a/ios/FormulaHelper/Models/AppState.swift
++++ b/ios/FormulaHelper/Models/AppState.swift
+@@ -69,18 +69,65 @@ struct WeightEntry: Codable {
+ 
+ struct AuthStatusResponse: Codable {
+     let authenticated: Bool
+-    let registered: Bool
+-    let user_name: String
++    let user_id: String?
++    let user_name: String?
++    let active_hh: String?
+ }
+ 
+-struct LoginVerifyResponse: Codable {
++struct AuthOkResponse: Codable {
+     let ok: Bool
+-    let user_name: String
++    let user_id: String?
++    let active_hh: String?
++}
++
++/// Raw shape returned by register/start, login/options, recover/start
++struct ChallengeEnvelope: Codable {
++    let challenge_id: String
++    // `options` is decoded separately as raw JSON for passing to ASAuthorization
++}
++
++struct Household: Codable, Identifiable {
++    let hh_id: String
++    let name: String
++    let role: String
++
++    var id: String { hh_id }
++}
++
++struct HouseholdsListResponse: Codable {
++    let active_hh: String?
++    let households: [Household]
++}
++
++struct HouseholdMember: Codable, Identifiable {
++    let user_id: String
++    let name: String
++    let role: String
++    let joined_at: String?
++
++    var id: String { user_id }
+ }
+ 
+-struct RegisterVerifyResponse: Codable {
++struct HouseholdMembersResponse: Codable {
++    let members: [HouseholdMember]
++}
++
++struct InvitePreview: Codable {
++    let hh_name: String
++    let inviter_name: String
++    let expires: Double
++}
++
++struct InviteCreateResponse: Codable {
++    let token: String
++    let expires: Double
++    let hh_name: String
++}
++
++struct InviteRedeemResponse: Codable {
+     let ok: Bool
+-    let user_name: String?
++    let hh_id: String?
++    let hh_name: String?
+ }
+ 
+ // MARK: - Write responses
+diff --git a/ios/FormulaHelper/Networking/APIClient.swift b/ios/FormulaHelper/Networking/APIClient.swift
+index 94c6d05..a9efe71 100644
+--- a/ios/FormulaHelper/Networking/APIClient.swift
++++ b/ios/FormulaHelper/Networking/APIClient.swift
+@@ -20,11 +20,12 @@ actor APIClient {
+     static let shared = APIClient()
+ 
+     static let baseURL: String = {
+-        #if DEV_STACK
+-        return "https://3lgqmzurih.execute-api.us-east-1.amazonaws.com"
+-        #else
+-        return "https://d20oyc88hlibbe.cloudfront.net"
+-        #endif
++        Bundle.main.object(forInfoDictionaryKey: "APIBaseURL") as? String ?? ""
++    }()
++
++    /// RP ID used by ASAuthorizationPlatformPublicKeyCredentialProvider. Sourced from Info.plist (per-config build setting).
++    static let rpId: String = {
++        Bundle.main.object(forInfoDictionaryKey: "RPID") as? String ?? ""
+     }()
+ 
+     private let session: URLSession
+@@ -49,22 +50,88 @@ actor APIClient {
+         try await get("/api/auth/status")
+     }
+ 
+-    /// Returns raw JSON data so AuthManager can extract the challenge bytes
++    /// Returns raw JSON data — caller extracts `challenge_id` and the `options` sub-object for ASAuthorization
++    func registerStart(body: [String: Any]) async throws -> Data {
++        try await postRaw("/api/auth/register/start", body: body)
++    }
++
++    func registerFinish(body: [String: Any]) async throws -> AuthOkResponse {
++        try await post("/api/auth/register/finish", body: body)
++    }
++
+     func loginOptions() async throws -> Data {
+-        try await postRaw("/api/auth/login-options", body: [:])
++        try await postRaw("/api/auth/login/options", body: [:])
++    }
++
++    func loginVerify(body: [String: Any]) async throws -> AuthOkResponse {
++        try await post("/api/auth/login/verify", body: body)
++    }
++
++    func recoverStart(siwaIdToken: String) async throws -> Data {
++        try await postRaw("/api/auth/recover/start", body: ["siwa_id_token": siwaIdToken])
++    }
++
++    func recoverFinish(body: [String: Any]) async throws -> AuthOkResponse {
++        try await post("/api/auth/recover/finish", body: body)
+     }
+ 
+-    func loginVerify(_ body: [String: Any]) async throws -> LoginVerifyResponse {
+-        try await post("/api/auth/login-verify", body: body)
++    func logout() async throws {
++        let _: OkResponse = try await post("/api/auth/logout", body: [:])
+     }
+ 
+-    /// Returns raw JSON data (challenge + user info needed for registration request)
+-    func registerOptions() async throws -> Data {
+-        try await postRaw("/api/auth/register-options", body: [:])
++    func devLogin() async throws -> AuthOkResponse {
++        try await post("/api/auth/dev-login", body: [:])
+     }
+ 
+-    func registerVerify(_ body: [String: Any]) async throws -> RegisterVerifyResponse {
+-        try await post("/api/auth/register-verify", body: body)
++    // MARK: - Households
++
++    func listHouseholds() async throws -> HouseholdsListResponse {
++        try await get("/api/households")
++    }
++
++    func createHousehold(name: String) async throws -> OkResponse {
++        try await post("/api/households", body: ["name": name])
++    }
++
++    func switchHousehold(hhId: String) async throws -> OkResponse {
++        try await post("/api/households/switch", body: ["hh_id": hhId])
++    }
++
++    func leaveHousehold(hhId: String) async throws -> OkResponse {
++        try await post("/api/households/\(encodePathComponent(hhId))/leave", body: [:])
++    }
++
++    func deleteHousehold(hhId: String) async throws {
++        try await delete("/api/households/\(encodePathComponent(hhId))")
++    }
++
++    func listMembers(hhId: String) async throws -> HouseholdMembersResponse {
++        try await get("/api/households/\(encodePathComponent(hhId))/members")
++    }
++
++    func kickMember(hhId: String, userId: String) async throws {
++        try await delete("/api/households/\(encodePathComponent(hhId))/members/\(encodePathComponent(userId))")
++    }
++
++    func updateMemberRole(hhId: String, userId: String, role: String) async throws {
++        let _: OkResponse = try await put(
++            "/api/households/\(encodePathComponent(hhId))/members/\(encodePathComponent(userId))",
++            body: ["role": role]
++        )
++    }
++
++    // MARK: - Invites
++
++    func previewInvite(token: String) async throws -> InvitePreview {
++        try await get("/api/invites/\(encodePathComponent(token))")
++    }
++
++    func createInvite() async throws -> InviteCreateResponse {
++        try await post("/api/invites", body: [:])
++    }
++
++    func redeemInvite(token: String) async throws -> InviteRedeemResponse {
++        try await post("/api/invites/\(encodePathComponent(token))/redeem", body: [:])
+     }
+ 
+     // MARK: - Feeding
+@@ -76,7 +143,7 @@ actor APIClient {
+     func logEntry(ml: Int, date: String? = nil) async throws -> OkResponse {
+         var body: [String: Any] = ["ml": ml]
+         if let date { body["date"] = date }
+-        return try await post("/api/log", body: body)
++        return try await post("/api/feedings", body: body)
+     }
+ 
+     func updateEntry(sk: String, text: String? = nil, leftover: String? = nil, ml: Int? = nil, date: String? = nil) async throws {
+@@ -86,12 +153,12 @@ actor APIClient {
+         if let ml { body["ml"] = ml }
+         if let date { body["date"] = date }
+         let encoded = encodePathComponent(sk)
+-        let _: OkResponse = try await put("/api/log/\(encoded)", body: body)
++        let _: OkResponse = try await put("/api/feedings/\(encoded)", body: body)
+     }
+ 
+     func deleteEntry(sk: String) async throws {
+         let encoded = encodePathComponent(sk)
+-        try await delete("/api/log/\(encoded)")
++        try await delete("/api/feedings/\(encoded)")
+     }
+ 
+     // MARK: - Diaper
+@@ -99,17 +166,17 @@ actor APIClient {
+     func logDiaper(type: String, date: String? = nil) async throws {
+         var body: [String: Any] = ["type": type]
+         if let date { body["date"] = date }
+-        let _: OkResponse = try await post("/api/diaper", body: body)
++        let _: OkResponse = try await post("/api/diapers", body: body)
+     }
+ 
+     func deleteDiaper(sk: String) async throws {
+         let encoded = encodePathComponent(sk)
+-        try await delete("/api/diaper/\(encoded)")
++        try await delete("/api/diapers/\(encoded)")
+     }
+ 
+     func updateDiaper(sk: String, date: String) async throws {
+         let encoded = encodePathComponent(sk)
+-        let _: OkResponse = try await put("/api/diaper/\(encoded)", body: ["date": date])
++        let _: OkResponse = try await put("/api/diapers/\(encoded)", body: ["date": date])
+     }
+ 
+     // MARK: - Nap
+@@ -118,12 +185,12 @@ actor APIClient {
+         var body: [String: Any] = [:]
+         if let date { body["date"] = date }
+         if let durationMins { body["duration_mins"] = durationMins }
+-        let _: OkResponse = try await post("/api/nap", body: body)
++        let _: OkResponse = try await post("/api/naps", body: body)
+     }
+ 
+     func deleteNap(sk: String) async throws {
+         let encoded = encodePathComponent(sk)
+-        try await delete("/api/nap/\(encoded)")
++        try await delete("/api/naps/\(encoded)")
+     }
+ 
+     func updateNap(sk: String, date: String? = nil, durationMins: Int? = nil) async throws {
+@@ -131,7 +198,7 @@ actor APIClient {
+         if let date { body["date"] = date }
+         if let durationMins { body["duration_mins"] = durationMins }
+         let encoded = encodePathComponent(sk)
+-        let _: OkResponse = try await put("/api/nap/\(encoded)", body: body)
++        let _: OkResponse = try await put("/api/naps/\(encoded)", body: body)
+     }
+ 
+     // MARK: - Timer
+@@ -153,41 +220,6 @@ actor APIClient {
+         ])
+     }
+ 
+-    // MARK: - User management (ashok only)
+-
+-    func listAllowedUsers() async throws -> [String] {
+-        struct R: Codable { let allowed_users: [String] }
+-        let r: R = try await get("/api/auth/allowed-users")
+-        return r.allowed_users
+-    }
+-
+-    func addAllowedUser(name: String) async throws {
+-        let _: OkResponse = try await post("/api/auth/allowed-users", body: ["name": name])
+-    }
+-
+-    func removeAllowedUser(name: String) async throws {
+-        let encoded = encodePathComponent(name)
+-        try await delete("/api/auth/allowed-users/\(encoded)")
+-    }
+-
+-    struct Credential: Codable, Identifiable {
+-        let cred_id: String
+-        let user_name: String
+-        let created: String
+-        var id: String { cred_id }
+-    }
+-
+-    func listCredentials() async throws -> [Credential] {
+-        struct R: Codable { let credentials: [Credential] }
+-        let r: R = try await get("/api/auth/credentials")
+-        return r.credentials
+-    }
+-
+-    func deleteCredential(credId: String) async throws {
+-        let encoded = encodePathComponent(credId)
+-        try await delete("/api/auth/credentials/\(encoded)")
+-    }
+-
+     // MARK: - Private HTTP helpers
+ 
+     private func get<T: Decodable>(_ path: String) async throws -> T {
+@@ -252,7 +284,7 @@ actor APIClient {
+         URL(string: Self.baseURL + path)!
+     }
+ 
+-    private func encodePathComponent(_ s: String) -> String {
++    private nonisolated func encodePathComponent(_ s: String) -> String {
+         s.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? s
+     }
+ }
+diff --git a/ios/FormulaHelper/Views/AuthView.swift b/ios/FormulaHelper/Views/AuthView.swift
+index ceac4df..27ae51d 100644
+--- a/ios/FormulaHelper/Views/AuthView.swift
++++ b/ios/FormulaHelper/Views/AuthView.swift
+@@ -1,11 +1,23 @@
+ import SwiftUI
++import OSLog
++
++private let authLog = Logger(subsystem: "com.ashokteja.formulahelper", category: "auth")
+ 
+ struct AuthView: View {
+     @EnvironmentObject var auth: AuthManager
+-    @State private var userName = ""
+     @State private var errorMessage: String?
+     @State private var isWorking = false
+-    @State private var showRegister = false
++    @State private var signInWorking = false
++    @State private var signUpDraft: SignUpDraft?
++    @State private var showSignUpFlow = false
++    @State private var joinDraft: SignUpDraft?
++    @State private var showJoinFlow = false
++    @State private var showJoinCodeEntry = false
++    @State private var pendingInviteToken = ""
++
++    private var isDevStack: Bool {
++        (Bundle.main.object(forInfoDictionaryKey: "IsDevStack") as? String) == "YES"
++    }
+ 
+     var body: some View {
+         ZStack {
+@@ -19,12 +31,11 @@ struct AuthView: View {
+             VStack(spacing: 0) {
+                 Spacer()
+ 
+-                // Logo / title
+                 VStack(spacing: 8) {
+                     Text("Formula Helper")
+                         .font(.outfit(28, weight: .bold))
+                         .foregroundColor(Color.primaryLabel)
+-                    Text(showRegister ? "Create your passkey" : "Sign in with your passkey")
++                    Text("Sign in with your passkey")
+                         .font(.outfit(11, weight: .medium))
+                         .tracking(2.5)
+                         .foregroundColor(Color.secondaryLabel)
+@@ -34,20 +45,6 @@ struct AuthView: View {
+                 Spacer()
+ 
+                 VStack(spacing: 12) {
+-                    if showRegister {
+-                        TextField("Your name (e.g. ashok, anu)", text: $userName)
+-                            .textContentType(.username)
+-                            .autocorrectionDisabled()
+-                            .textInputAutocapitalization(.never)
+-                            .font(.outfit(15))
+-                            .foregroundColor(Color.primaryLabel)
+-                            .padding(14)
+-                            .background(Color.secondaryBackground)
+-                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+-                            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+-                                .stroke(Color.opaqueSeparator, lineWidth: 1))
+-                    }
+-
+                     if let error = errorMessage {
+                         Text(error)
+                             .font(.outfit(12))
+@@ -55,61 +52,485 @@ struct AuthView: View {
+                             .multilineTextAlignment(.center)
+                     }
+ 
+-                    Button {
+-                        Task { await primaryAction() }
+-                    } label: {
+-                        HStack(spacing: 10) {
+-                            if isWorking {
+-                                ProgressView().tint(Color.green).scaleEffect(0.85)
+-                            } else {
+-                                Image(systemName: showRegister ? "faceid" : "person.badge.key.fill")
+-                                    .font(.system(size: 15))
+-                            }
+-                            Text(showRegister ? "Register Passkey" : "Sign In with Passkey")
+-                                .font(.outfit(15, weight: .semibold))
+-                        }
+-                        .foregroundColor(Color.green)
+-                        .frame(maxWidth: .infinity, minHeight: 52)
+-                        .background(Color.greenFill)
+-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+-                        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+-                            .stroke(Color.greenBorder, lineWidth: 1))
++                    primaryButton(label: "Sign In with Passkey", icon: "person.badge.key.fill") {
++                        signInWorking = true
++                        defer { signInWorking = false }
++                        await run { try await auth.signIn() }
++                    }
++
++                    secondaryButton(label: "Create Account") {
++                        Task { await startSignUp() }
++                    }
++
++                    secondaryButton(label: "Join with Invite") {
++                        showJoinCodeEntry = true
+                     }
+-                    .disabled(isWorking || (showRegister && userName.trimmingCharacters(in: .whitespaces).isEmpty))
+ 
+                     Button {
+-                        withAnimation { showRegister.toggle(); errorMessage = nil }
++                        Task { await run { try await auth.recover() } }
+                     } label: {
+-                        Text(showRegister
+-                             ? "Already have a passkey? Sign in"
+-                             : "New user? Register a passkey")
++                        Text("Can't sign in? Recover with Apple ID")
+                             .font(.outfit(12))
+                             .foregroundColor(Color.secondaryLabel)
+                     }
+                     .padding(.top, 4)
++
++                    if isDevStack {
++                        Button {
++                            Task { await run {
++                                _ = try await APIClient.shared.devLogin()
++                                await auth.checkStatus()
++                            } }
++                        } label: {
++                            Text("Dev Login (bypass)")
++                                .font(.outfit(12, weight: .semibold))
++                                .foregroundColor(Color.orange)
++                        }
++                        .padding(.top, 2)
++                    }
+                 }
+                 .padding(.horizontal, 28)
+ 
+                 Spacer(minLength: 50)
+             }
+         }
++        .fullScreenCover(isPresented: $showSignUpFlow) {
++            if let draft = signUpDraft {
++                SignUpFlowView(draft: draft, inviteToken: nil) {
++                    showSignUpFlow = false
++                    signUpDraft = nil
++                }
++                .environmentObject(auth)
++            }
++        }
++        .fullScreenCover(isPresented: $showJoinFlow) {
++            if let draft = joinDraft {
++                SignUpFlowView(draft: draft, inviteToken: pendingInviteToken) {
++                    showJoinFlow = false
++                    joinDraft = nil
++                    pendingInviteToken = ""
++                }
++                .environmentObject(auth)
++            }
++        }
++        .sheet(isPresented: $showJoinCodeEntry) {
++            InviteCodeSheet(isPresented: $showJoinCodeEntry) { token in
++                pendingInviteToken = token
++                Task { await startJoin() }
++            }
++        }
+     }
+ 
+-    private func primaryAction() async {
++    // MARK: - Triggers
++
++    private func startSignUp() async {
+         errorMessage = nil; isWorking = true
+         defer { isWorking = false }
+         do {
+-            if showRegister {
+-                try await auth.register(userName: userName.trimmingCharacters(in: .whitespaces).lowercased())
+-            } else {
+-                try await auth.signIn()
++            authLog.notice("starting SIWA for sign-up")
++            let draft = try await auth.beginSignUp()
++            authLog.notice("SIWA returned, firstName=\(draft.suggestedFirstName ?? "<nil>", privacy: .public)")
++            signUpDraft = draft
++            showSignUpFlow = true
++            authLog.notice("showSignUpFlow=true")
++        } catch {
++            authLog.error("sign-up error: \(String(describing: error), privacy: .public)")
++            errorMessage = error.localizedDescription
++        }
++    }
++
++    private func startJoin() async {
++        errorMessage = nil; isWorking = true
++        defer { isWorking = false }
++        do {
++            authLog.notice("starting SIWA for join")
++            let draft = try await auth.beginSignUp()
++            joinDraft = draft
++            showJoinFlow = true
++        } catch {
++            authLog.error("join error: \(String(describing: error), privacy: .public)")
++            errorMessage = error.localizedDescription
++        }
++    }
++
++    private func run(_ op: @escaping () async throws -> Void) async {
++        errorMessage = nil; isWorking = true
++        defer { isWorking = false }
++        do { try await op() }
++        catch { errorMessage = error.localizedDescription }
++    }
++
++    // MARK: - Buttons
++
++    private func primaryButton(label: String, icon: String, action: @escaping () async -> Void) -> some View {
++        Button {
++            Task { await action() }
++        } label: {
++            HStack(spacing: 10) {
++                if signInWorking {
++                    ProgressView().tint(Color.green).scaleEffect(0.85)
++                } else {
++                    Image(systemName: icon).font(.system(size: 15))
++                }
++                Text(label).font(.outfit(15, weight: .semibold))
++            }
++            .foregroundColor(Color.green)
++            .frame(maxWidth: .infinity, minHeight: 52)
++            .background(Color.greenFill)
++            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
++            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
++                .stroke(Color.greenBorder, lineWidth: 1))
++        }
++        .disabled(isWorking)
++    }
++
++    private func secondaryButton(label: String, action: @escaping () -> Void) -> some View {
++        Button(action: action) {
++            Text(label)
++                .font(.outfit(14, weight: .medium))
++                .foregroundColor(Color.primaryLabel)
++                .frame(maxWidth: .infinity, minHeight: 46)
++                .background(Color.secondaryBackground)
++                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
++                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
++                    .stroke(Color.opaqueSeparator, lineWidth: 1))
++        }
++        .disabled(isWorking)
++    }
++}
++
++// MARK: - Invite code entry
++
++struct InviteCodeSheet: View {
++    @Binding var isPresented: Bool
++    let onContinue: (String) -> Void
++
++    @State private var token = ""
++    @FocusState private var focused: Bool
++
++    private var trimmed: String { token.trimmingCharacters(in: .whitespaces) }
++
++    var body: some View {
++        NavigationStack {
++            ZStack {
++                Color.primaryBackground.ignoresSafeArea()
++                List {
++                    Section {
++                        TextField("Paste invite code", text: $token)
++                            .textContentType(.oneTimeCode)
++                            .autocorrectionDisabled()
++                            .textInputAutocapitalization(.never)
++                            .appFont(.body)
++                            .foregroundColor(Color.primaryLabel)
++                            .focused($focused)
++                            .listRowBackground(Color.elevatedBackground)
++                    } footer: {
++                        Text("Someone in the household you're joining needs to send you an invite code.")
++                            .appFont(.footnote)
++                            .foregroundColor(Color.secondaryLabel)
++                    }
++                }
++                .listStyle(.insetGrouped)
++                .scrollContentBackground(.hidden)
++            }
++            .navigationTitle("Join Household")
++            .navigationBarTitleDisplayMode(.inline)
++            .toolbar {
++                ToolbarItem(placement: .cancellationAction) {
++                    Button("Cancel") { isPresented = false }
++                        .foregroundColor(Color.secondaryLabel)
++                }
++                ToolbarItem(placement: .confirmationAction) {
++                    Button("Continue") {
++                        isPresented = false
++                        onContinue(trimmed)
++                    }
++                    .disabled(trimmed.isEmpty)
++                }
++            }
++            .onAppear { focused = true }
++        }
++    }
++}
++
++// MARK: - Paged signup flow
++
++struct SignUpFlowView: View {
++    @EnvironmentObject var auth: AuthManager
++    @Environment(\.dismiss) private var dismiss
++
++    let draft: SignUpDraft
++    let inviteToken: String?
++    let onFinish: () -> Void
++
++    @State private var step: Int = 0
++    @State private var userName: String = ""
++    @State private var householdName: String = ""
++    @State private var childName: String = ""
++    @State private var childDob: Date = Calendar.current.date(byAdding: .month, value: -3, to: Date()) ?? Date()
++    @State private var errorMessage: String?
++    @State private var isWorking = false
++
++    private var isInvite: Bool { inviteToken != nil }
++    private var totalSteps: Int { isInvite ? 1 : 3 }
++    private var isLastStep: Bool { step == totalSteps - 1 }
++
++    var body: some View {
++        ZStack {
++            Color.primaryBackground.ignoresSafeArea()
++
++            VStack(spacing: 0) {
++                header
++                Spacer(minLength: 20)
++
++                pageContent
++                    .padding(.horizontal, 28)
++                    .transition(.asymmetric(
++                        insertion: .move(edge: .trailing).combined(with: .opacity),
++                        removal: .move(edge: .leading).combined(with: .opacity)
++                    ))
++                    .id(step)
++
++                Spacer()
++
++                footer
++                    .padding(.horizontal, 28)
++                    .padding(.bottom, 20)
+             }
++        }
++        .onAppear {
++            if userName.isEmpty, let suggested = draft.suggestedFirstName, !suggested.isEmpty {
++                userName = suggested
++            }
++        }
++    }
++
++    // MARK: - Header (progress + close)
++
++    private var header: some View {
++        VStack(spacing: 12) {
++            HStack {
++                Button {
++                    if step == 0 {
++                        dismiss()
++                        onFinish()
++                    } else {
++                        withAnimation { step -= 1 }
++                    }
++                } label: {
++                    Image(systemName: step == 0 ? "xmark" : "chevron.left")
++                        .font(.system(size: 16, weight: .semibold))
++                        .foregroundColor(Color.secondaryLabel)
++                        .frame(width: 36, height: 36)
++                        .background(Color.secondaryBackground)
++                        .clipShape(Circle())
++                }
++                Spacer()
++                Text("Step \(step + 1) of \(totalSteps)")
++                    .font(.outfit(11, weight: .medium))
++                    .tracking(1.5)
++                    .foregroundColor(Color.tertiaryLabel)
++                    .textCase(.uppercase)
++                Spacer()
++                Color.clear.frame(width: 36, height: 36)
++            }
++
++            // Progress dots
++            HStack(spacing: 6) {
++                ForEach(0..<totalSteps, id: \.self) { i in
++                    Capsule()
++                        .fill(i <= step ? Color.green : Color.opaqueSeparator)
++                        .frame(height: 3)
++                }
++            }
++        }
++        .padding(.horizontal, 24)
++        .padding(.top, 20)
++    }
++
++    // MARK: - Pages
++
++    @ViewBuilder
++    private var pageContent: some View {
++        if isInvite {
++            namePage
++        } else {
++            switch step {
++            case 0: namePage
++            case 1: householdPage
++            default: childPage
++            }
++        }
++    }
++
++    private var namePage: some View {
++        VStack(alignment: .leading, spacing: 14) {
++            pageTitle("What should we call you?", subtitle: nil)
++
++            TextField("First name", text: $userName)
++                .textContentType(.givenName)
++                .autocorrectionDisabled()
++                .textInputAutocapitalization(.words)
++                .font(.outfit(17))
++                .foregroundColor(Color.primaryLabel)
++                .padding(14)
++                .background(Color.secondaryBackground)
++                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
++                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
++                    .stroke(Color.opaqueSeparator, lineWidth: 1))
++        }
++    }
++
++    private var householdPage: some View {
++        VStack(alignment: .leading, spacing: 14) {
++            pageTitle("Name your household", subtitle: "Everyone you invite will share this space. You can change it later.")
++
++            TextField("e.g. Gadepalli", text: $householdName)
++                .textContentType(.organizationName)
++                .autocorrectionDisabled()
++                .textInputAutocapitalization(.words)
++                .font(.outfit(17))
++                .foregroundColor(Color.primaryLabel)
++                .padding(14)
++                .background(Color.secondaryBackground)
++                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
++                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
++                    .stroke(Color.opaqueSeparator, lineWidth: 1))
++        }
++    }
++
++    private var childPage: some View {
++        VStack(alignment: .leading, spacing: 14) {
++            pageTitle("Tell us about your little one", subtitle: "Used to personalize the app. You can skip and add later.")
++
++            TextField("Baby's name", text: $childName)
++                .textContentType(.givenName)
++                .autocorrectionDisabled()
++                .textInputAutocapitalization(.words)
++                .font(.outfit(17))
++                .foregroundColor(Color.primaryLabel)
++                .padding(14)
++                .background(Color.secondaryBackground)
++                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
++                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
++                    .stroke(Color.opaqueSeparator, lineWidth: 1))
++
++            VStack(alignment: .leading, spacing: 8) {
++                Text("Date of birth")
++                    .font(.outfit(13))
++                    .foregroundColor(Color.secondaryLabel)
++                DatePicker("", selection: $childDob, in: ...Date(), displayedComponents: .date)
++                    .datePickerStyle(.wheel)
++                    .labelsHidden()
++                    .frame(maxWidth: .infinity)
++                    .background(Color.secondaryBackground)
++                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
++            }
++        }
++    }
++
++    private func pageTitle(_ title: String, subtitle: String?) -> some View {
++        VStack(alignment: .leading, spacing: 6) {
++            Text(title)
++                .font(.outfit(24, weight: .bold))
++                .foregroundColor(Color.primaryLabel)
++            if let subtitle {
++                Text(subtitle)
++                    .font(.outfit(13))
++                    .foregroundColor(Color.secondaryLabel)
++            }
++        }
++        .padding(.bottom, 6)
++    }
++
++    // MARK: - Footer (continue / finish)
++
++    private var footer: some View {
++        VStack(spacing: 10) {
++            if let errorMessage {
++                Text(errorMessage)
++                    .font(.outfit(12))
++                    .foregroundColor(Color.red.opacity(0.85))
++                    .multilineTextAlignment(.center)
++            }
++
++            Button {
++                Task { await advance() }
++            } label: {
++                HStack(spacing: 10) {
++                    if isWorking {
++                        ProgressView().tint(Color.green).scaleEffect(0.85)
++                    } else if isLastStep {
++                        Image(systemName: "faceid").font(.system(size: 15))
++                    }
++                    Text(isLastStep ? "Create Passkey & Finish" : "Continue")
++                        .font(.outfit(15, weight: .semibold))
++                }
++                .foregroundColor(Color.green)
++                .frame(maxWidth: .infinity, minHeight: 52)
++                .background(Color.greenFill)
++                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
++                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
++                    .stroke(Color.greenBorder, lineWidth: 1))
++            }
++            .disabled(isWorking || !canAdvance)
++        }
++    }
++
++    private var canAdvance: Bool {
++        switch currentPageKey {
++        case .name:      return !userName.trimmingCharacters(in: .whitespaces).isEmpty
++        case .household: return !householdName.trimmingCharacters(in: .whitespaces).isEmpty
++        case .child:     return true  // child name + DOB both optional
++        }
++    }
++
++    private enum PageKey { case name, household, child }
++
++    private var currentPageKey: PageKey {
++        if isInvite { return .name }
++        switch step {
++        case 0: return .name
++        case 1: return .household
++        default: return .child
++        }
++    }
++
++    private func advance() async {
++        errorMessage = nil
++        if !isLastStep {
++            withAnimation { step += 1 }
++            return
++        }
++        isWorking = true
++        defer { isWorking = false }
++        do {
++            let dobStr = childName.trimmingCharacters(in: .whitespaces).isEmpty
++                ? nil
++                : isoDate(childDob)
++            try await auth.completeSignUp(
++                draft: draft,
++                userName: userName.trimmingCharacters(in: .whitespaces),
++                householdName: isInvite ? nil : householdName.trimmingCharacters(in: .whitespaces),
++                childName: childName.trimmingCharacters(in: .whitespaces).isEmpty ? nil : childName.trimmingCharacters(in: .whitespaces),
++                childDob: dobStr,
++                inviteToken: inviteToken
++            )
++            dismiss()
++            onFinish()
+         } catch AuthError.cancelled {
+-            // dismissed — no message
++            // user dismissed the passkey sheet — stay on this page
+         } catch {
+             errorMessage = error.localizedDescription
+         }
+     }
++
++    private func isoDate(_ date: Date) -> String {
++        let f = DateFormatter()
++        f.dateFormat = "yyyy-MM-dd"
++        f.timeZone = TimeZone(identifier: "UTC")
++        return f.string(from: date)
++    }
+ }
+ 
+ #Preview {
+diff --git a/ios/FormulaHelper/Views/SettingsView.swift b/ios/FormulaHelper/Views/SettingsView.swift
+index d93a867..16ad557 100644
+--- a/ios/FormulaHelper/Views/SettingsView.swift
++++ b/ios/FormulaHelper/Views/SettingsView.swift
+@@ -1,15 +1,18 @@
+ import SwiftUI
++import UIKit
+ 
+ // MARK: - Settings (native insetGrouped list)
+ 
+ struct SettingsView: View {
+     @ObservedObject var vm: StateViewModel
+     @EnvironmentObject var auth: AuthManager
+-    @EnvironmentObject var users: UserStore
+-    @State private var showInvite = false
+     @State private var showResetConfirm = false
+-
+-    private var isAdmin: Bool { auth.authState.userName == "ashok" }
++    @State private var households: [Household] = []
++    @State private var activeHhId: String?
++    @State private var prefetchedMembers: [String: [HouseholdMember]] = [:]
++    @State private var showRedeemEntry = false
++    @State private var redeemMessage: String?
++    @State private var redeemError: String?
+ 
+     var body: some View {
+         NavigationStack {
+@@ -17,9 +20,10 @@ struct SettingsView: View {
+                 Color.primaryBackground.ignoresSafeArea()
+ 
+                 List {
++                    householdSection
+                     timerSection
+                     presetsSection
+-                    if isAdmin { usersSection }
++                    accountSection
+                     aboutSection
+                 }
+                 .listStyle(.insetGrouped)
+@@ -29,12 +33,104 @@ struct SettingsView: View {
+             .navigationBarTitleDisplayMode(.inline)
+             .toolbarBackground(Color.primaryBackground, for: .navigationBar)
+             .toolbarBackground(.visible, for: .navigationBar)
++            .task { await loadHouseholds() }
++            .sheet(isPresented: $showRedeemEntry) {
++                InviteCodeSheet(isPresented: $showRedeemEntry) { token in
++                    Task { await redeem(token: token) }
++                }
++            }
+         }
+-        .task { if isAdmin { await users.load() } }
+-        .sheet(isPresented: $showInvite) {
+-            InviteUserSheet(isPresented: $showInvite) { name in
+-                try await users.invite(name: name)
++    }
++
++    // MARK: Household section
++
++    @ViewBuilder
++    private var householdSection: some View {
++        Section {
++            if let active = activeHousehold {
++                NavigationLink {
++                    HouseholdDetailView(
++                        household: active,
++                        initialMembers: prefetchedMembers[active.hh_id] ?? [],
++                        vm: vm
++                    ) {
++                        Task { await loadHouseholds() }
++                    }
++                    .environmentObject(auth)
++                } label: {
++                    SettingsRow(
++                        icon: "house.fill",
++                        tint: .orange,
++                        title: active.name.isEmpty ? "Household" : active.name,
++                        trailing: active.role.capitalized
++                    )
++                }
++                .listRowBackground(Color.elevatedBackground)
++            }
++
++            Button {
++                redeemMessage = nil
++                redeemError = nil
++                showRedeemEntry = true
++            } label: {
++                SettingsRow(
++                    icon: "envelope.open.fill",
++                    tint: .purple,
++                    title: "Redeem invite code"
++                )
++            }
++            .listRowBackground(Color.elevatedBackground)
++        } header: {
++            Text("Household").foregroundColor(Color.secondaryLabel)
++        } footer: {
++            if let redeemError {
++                Text(redeemError).foregroundColor(Color.red.opacity(0.85))
++            } else if let redeemMessage {
++                Text(redeemMessage).foregroundColor(Color.secondaryLabel)
++            }
++        }
++    }
++
++    private var activeHousehold: Household? {
++        guard let id = activeHhId else { return households.first }
++        return households.first(where: { $0.hh_id == id }) ?? households.first
++    }
++
++    private func loadHouseholds() async {
++        do {
++            let resp = try await APIClient.shared.listHouseholds()
++            households = resp.households
++            activeHhId = resp.active_hh
++            await prefetchMembers()
++        } catch {
++            // Non-fatal — just hide the section
++        }
++    }
++
++    private func prefetchMembers() async {
++        guard let active = activeHousehold else { return }
++        if let resp = try? await APIClient.shared.listMembers(hhId: active.hh_id) {
++            prefetchedMembers[active.hh_id] = HouseholdDetailView.sortMembers(resp.members)
++        }
++    }
++
++    private func redeem(token: String) async {
++        redeemMessage = nil
++        redeemError = nil
++        do {
++            let resp = try await APIClient.shared.redeemInvite(token: token)
++            if let hhId = resp.hh_id {
++                _ = try? await APIClient.shared.switchHousehold(hhId: hhId)
++            }
++            await loadHouseholds()
++            await vm.refresh()
++            if let name = resp.hh_name, !name.isEmpty {
++                redeemMessage = "Joined \(name). Switched to this household."
++            } else {
++                redeemMessage = "Joined. Switched to the new household."
+             }
++        } catch {
++            redeemError = error.localizedDescription
+         }
+     }
+ 
+@@ -118,54 +214,24 @@ struct SettingsView: View {
+         return end > Date().timeIntervalSince1970
+     }
+ 
+-    // MARK: Users section
++    // MARK: Account section
+ 
+     @ViewBuilder
+-    private var usersSection: some View {
++    private var accountSection: some View {
+         Section {
+-            if users.loading {
+-                HStack {
+-                    Spacer()
+-                    ProgressView().tint(Color.secondaryLabel)
+-                    Spacer()
+-                }
+-                .padding(.vertical, 6)
+-                .listRowBackground(Color.elevatedBackground)
+-            } else {
+-                ForEach(users.users) { user in
+-                    NavigationLink {
+-                        UserDetailView(user: user, store: users)
+-                    } label: {
+-                        UserRow(user: user)
+-                    }
+-                    .listRowBackground(Color.elevatedBackground)
+-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+-                        if !user.isAdmin {
+-                            Button(role: .destructive) {
+-                                Task { await users.remove(name: user.name) }
+-                            } label: {
+-                                Label("Remove", systemImage: "trash")
+-                            }
+-                        }
+-                    }
+-                }
+-
+-                Button { showInvite = true } label: {
+-                    HStack(spacing: 12) {
+-                        Image(systemName: "plus.circle.fill")
+-                            .font(.system(size: 22))
+-                            .foregroundColor(Color.green)
+-                        Text("Invite User")
+-                            .appFont(.body)
+-                            .foregroundColor(Color.primaryLabel)
+-                        Spacer()
+-                    }
+-                    .contentShape(Rectangle())
+-                }
+-                .listRowBackground(Color.elevatedBackground)
++            Button(role: .destructive) {
++                Task { await auth.logout() }
++            } label: {
++                SettingsRow(
++                    icon: "rectangle.portrait.and.arrow.right",
++                    tint: .red,
++                    title: "Sign Out",
++                    titleColor: .red
++                )
+             }
++            .listRowBackground(Color.elevatedBackground)
+         } header: {
+-            Text("Users").foregroundColor(Color.secondaryLabel)
++            Text("Account").foregroundColor(Color.secondaryLabel)
+         }
+     }
+ 
+@@ -183,7 +249,7 @@ struct SettingsView: View {
+             }
+             .listRowBackground(Color.elevatedBackground)
+ 
+-            if let name = auth.authState.userName {
++            if let name = auth.authState.userName, !name.isEmpty {
+                 SettingsRow(
+                     icon: "person.crop.circle.fill",
+                     tint: .purple,
+@@ -205,56 +271,6 @@ struct SettingsView: View {
+     }
+ }
+ 
+-// MARK: - User store
+-
+-@MainActor
+-final class UserStore: ObservableObject {
+-    static let shared = UserStore()
+-
+-    struct User: Identifiable {
+-        let name: String
+-        let credentials: [APIClient.Credential]
+-        let isAdmin: Bool
+-        var id: String { name }
+-        var isPending: Bool { credentials.isEmpty && !isAdmin }
+-    }
+-
+-    @Published var users: [User] = []
+-    @Published var loading = false
+-    private var hasLoaded = false
+-
+-    func load() async {
+-        if !hasLoaded { loading = true }
+-        async let u = try? APIClient.shared.listAllowedUsers()
+-        async let c = try? APIClient.shared.listCredentials()
+-        let allowed = await u ?? []
+-        let creds = await c ?? []
+-        let grouped = Dictionary(grouping: creds, by: \.user_name)
+-        let names = Set(allowed + grouped.keys + ["ashok"])
+-        users = names.sorted().map { name in
+-            User(name: name, credentials: grouped[name] ?? [], isAdmin: name == "ashok")
+-        }
+-        hasLoaded = true
+-        loading = false
+-    }
+-
+-    func invite(name: String) async throws {
+-        let n = name.trimmingCharacters(in: .whitespaces).lowercased()
+-        try await APIClient.shared.addAllowedUser(name: n)
+-        await load()
+-    }
+-
+-    func remove(name: String) async {
+-        try? await APIClient.shared.removeAllowedUser(name: name)
+-        await load()
+-    }
+-
+-    func revoke(credId: String) async {
+-        try? await APIClient.shared.deleteCredential(credId: credId)
+-        await load()
+-    }
+-}
+-
+ // MARK: - Reusable row (iOS Settings style)
+ 
+ struct SettingsRow: View {
+@@ -290,75 +306,6 @@ struct SettingsRow: View {
+     }
+ }
+ 
+-// MARK: - User row
+-
+-struct UserRow: View {
+-    let user: UserStore.User
+-
+-    var body: some View {
+-        HStack(spacing: 12) {
+-            avatar
+-            VStack(alignment: .leading, spacing: 2) {
+-                Text(user.name.capitalized)
+-                    .appFont(.body)
+-                    .foregroundColor(Color.primaryLabel)
+-                Text(subtitle)
+-                    .appFont(.footnote)
+-                    .foregroundColor(Color.secondaryLabel)
+-            }
+-            Spacer()
+-            trailing
+-        }
+-        .padding(.vertical, 4)
+-    }
+-
+-    private var avatarTint: Color {
+-        user.isAdmin ? Color.green : (user.isPending ? Color.yellow : Color.blue)
+-    }
+-
+-    private var avatar: some View {
+-        ZStack {
+-            Circle().fill(avatarTint.opacity(0.18))
+-            Text(String(user.name.prefix(1)).uppercased())
+-                .appFont(.headline)
+-                .foregroundColor(avatarTint)
+-        }
+-        .frame(width: 36, height: 36)
+-    }
+-
+-    private var subtitle: String {
+-        if user.isPending { return "Waiting for passkey" }
+-        let n = user.credentials.count
+-        return n == 1 ? "1 passkey" : "\(n) passkeys"
+-    }
+-
+-    @ViewBuilder
+-    private var trailing: some View {
+-        if user.isAdmin {
+-            PillBadge(text: "ADMIN", color: Color.green)
+-        } else if user.isPending {
+-            PillBadge(text: "PENDING", color: Color.yellow)
+-        }
+-    }
+-}
+-
+-struct PillBadge: View {
+-    let text: String
+-    let color: Color
+-
+-    var body: some View {
+-        Text(text)
+-            .appFont(.caption2)
+-            .tracking(1.2)
+-            .foregroundColor(color)
+-            .padding(.horizontal, 8)
+-            .padding(.vertical, 3)
+-            .background(color.opacity(0.12))
+-            .clipShape(Capsule())
+-            .overlay(Capsule().stroke(color.opacity(0.30), lineWidth: 1))
+-    }
+-}
+-
+ // MARK: - Timer detail
+ 
+ struct TimerDetailView: View {
+@@ -509,251 +456,502 @@ struct PresetsDetailView: View {
+     }
+ }
+ 
+-// MARK: - User detail
++// MARK: - Household detail
+ 
+-struct UserDetailView: View {
+-    let user: UserStore.User
+-    @ObservedObject var store: UserStore
++struct HouseholdDetailView: View {
++    @EnvironmentObject var auth: AuthManager
+     @Environment(\.dismiss) private var dismiss
+-    @State private var confirmRemove = false
+-    @State private var confirmRevoke: APIClient.Credential?
++
++    let household: Household
++    let vm: StateViewModel
++    let onChange: () -> Void
++
++    @State private var members: [HouseholdMember]
++    @State private var loadingMembers = false
++    @State private var membersError: String?
++
++    init(household: Household, initialMembers: [HouseholdMember] = [], vm: StateViewModel, onChange: @escaping () -> Void) {
++        self.household = household
++        self.vm = vm
++        self.onChange = onChange
++        _members = State(initialValue: initialMembers)
++    }
++
++    @State private var creatingInvite = false
++    @State private var inviteResult: InviteCreateResponse?
++    @State private var showInviteShare = false
++    @State private var inviteError: String?
++
++    @State private var showLeaveConfirm = false
++    @State private var leaveBlockedAlert = false
++    @State private var showDeleteConfirm = false
++
++    @State private var memberToKick: HouseholdMember?
++    @State private var memberForRoleChange: HouseholdMember?
++
++    private var isOwner: Bool { household.role.lowercased() == "owner" }
+ 
+     var body: some View {
+         ZStack {
+             Color.primaryBackground.ignoresSafeArea()
+-
+             List {
+-                Section {
+-                    HStack(spacing: 16) {
+-                        ZStack {
+-                            Circle().fill(avatarTint.opacity(0.18))
+-                            Text(String(user.name.prefix(1)).uppercased())
+-                                .font(.custom("Outfit", size: 28, relativeTo: .title).bold())
+-                                .foregroundColor(avatarTint)
+-                        }
+-                        .frame(width: 56, height: 56)
+-
+-                        VStack(alignment: .leading, spacing: 6) {
+-                            Text(user.name.capitalized)
+-                                .appFont(.title2)
+-                                .foregroundColor(Color.primaryLabel)
+-                            if user.isAdmin {
+-                                PillBadge(text: "ADMIN", color: Color.green)
+-                            } else if user.isPending {
+-                                PillBadge(text: "PENDING", color: Color.yellow)
+-                            }
+-                        }
+-                        Spacer()
+-                    }
+-                    .padding(.vertical, 8)
+-                    .listRowBackground(Color.elevatedBackground)
++                membersSection
++                if isOwner {
++                    inviteSection
+                 }
++                dangerZoneSection
++            }
++            .listStyle(.insetGrouped)
++            .scrollContentBackground(.hidden)
++        }
++        .navigationTitle(household.name.isEmpty ? "Household" : household.name)
++        .navigationBarTitleDisplayMode(.inline)
++        .toolbarBackground(Color.primaryBackground, for: .navigationBar)
++        .toolbarBackground(.visible, for: .navigationBar)
++        .task { await loadMembers() }
++        .sheet(isPresented: $showInviteShare) {
++            if let invite = inviteResult {
++                InviteShareSheet(invite: invite, isPresented: $showInviteShare)
++            }
++        }
++    }
+ 
+-                Section {
+-                    if user.credentials.isEmpty {
+-                        Text(user.isPending
+-                             ? "No passkey registered yet. Share sign-in instructions with this user."
+-                             : "No passkeys on file.")
+-                            .appFont(.footnote)
+-                            .foregroundColor(Color.secondaryLabel)
+-                            .listRowBackground(Color.elevatedBackground)
+-                    } else {
+-                        ForEach(user.credentials) { cred in
+-                            passkeyRow(cred)
+-                                .listRowBackground(Color.elevatedBackground)
+-                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+-                                    Button(role: .destructive) {
+-                                        confirmRevoke = cred
+-                                    } label: {
+-                                        Label("Revoke", systemImage: "trash")
+-                                    }
+-                                }
+-                        }
+-                    }
+-                } header: {
+-                    Text("Passkeys").foregroundColor(Color.secondaryLabel)
+-                } footer: {
+-                    if !user.credentials.isEmpty {
+-                        Text("Swipe left on a passkey to revoke it.")
+-                            .appFont(.footnote)
+-                            .foregroundColor(Color.secondaryLabel)
+-                    }
+-                }
++    // MARK: Sections
+ 
+-                if !user.isAdmin {
+-                    Section {
+-                        Button(role: .destructive) {
+-                            confirmRemove = true
+-                        } label: {
+-                            HStack {
+-                                Spacer()
+-                                Text("Remove User")
+-                                    .appFont(.body)
+-                                    .foregroundColor(Color.red)
+-                                Spacer()
+-                            }
++    private var membersSection: some View {
++        Section {
++            if loadingMembers && members.isEmpty {
++                HStack {
++                    ProgressView().tint(Color.secondaryLabel).scaleEffect(0.8)
++                    Text("Loading members…")
++                        .appFont(.footnote)
++                        .foregroundColor(Color.secondaryLabel)
++                }
++                .listRowBackground(Color.elevatedBackground)
++            } else if members.isEmpty {
++                Text(membersError ?? "No members found")
++                    .appFont(.footnote)
++                    .foregroundColor(Color.secondaryLabel)
++                    .listRowBackground(Color.elevatedBackground)
++            } else {
++                ForEach(members) { m in
++                    Button {
++                        if canChangeRole(m) { memberForRoleChange = m }
++                    } label: {
++                        memberRow(m)
++                    }
++                    .buttonStyle(.plain)
++                    .disabled(!canChangeRole(m))
++                    .listRowBackground(Color.elevatedBackground)
++                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
++                        if canKick(m) {
++                            Button(role: .destructive) {
++                                memberToKick = m
++                            } label: { Image(systemName: "trash.fill") }
+                         }
+-                        .listRowBackground(Color.elevatedBackground)
+-                    } footer: {
+-                        Text("Revokes all passkeys and removes this user from the allowlist.")
+-                            .appFont(.footnote)
+-                            .foregroundColor(Color.secondaryLabel)
+                     }
+                 }
+             }
+-            .listStyle(.insetGrouped)
+-            .scrollContentBackground(.hidden)
++        } header: {
++            Text("Members").foregroundColor(Color.secondaryLabel)
++        } footer: {
++            if let membersError, !members.isEmpty {
++                Text(membersError).foregroundColor(Color.red.opacity(0.85))
++            } else if members.contains(where: canChangeRole) || members.contains(where: canKick) {
++                HStack(spacing: 6) {
++                    Image(systemName: "hand.draw.fill")
++                        .font(.system(size: 11))
++                    Text("Tap a member to change their role. Swipe left to remove them.")
++                }
++                .appFont(.footnote)
++                .foregroundColor(Color.secondaryLabel)
++            }
+         }
+-        .navigationTitle(user.name.capitalized)
+-        .navigationBarTitleDisplayMode(.inline)
+         .confirmationDialog(
+-            "Remove \(user.name.capitalized)?",
+-            isPresented: $confirmRemove,
+-            titleVisibility: .visible
+-        ) {
++            memberToKick.map { "Remove \($0.name.isEmpty ? "member" : $0.name)?" } ?? "",
++            isPresented: Binding(
++                get: { memberToKick != nil },
++                set: { if !$0 { memberToKick = nil } }
++            ),
++            titleVisibility: .visible,
++            presenting: memberToKick
++        ) { target in
+             Button("Remove", role: .destructive) {
+-                Task {
+-                    await store.remove(name: user.name)
+-                    dismiss()
+-                }
++                Task { await kick(target) }
+             }
+-            Button("Cancel", role: .cancel) {}
+-        } message: {
+-            Text("This revokes all passkeys and removes them from the allowlist.")
++            Button("Cancel", role: .cancel) { memberToKick = nil }
++        } message: { _ in
++            Text("They'll immediately lose access to this household's logs and settings.")
+         }
+         .confirmationDialog(
+-            "Revoke this passkey?",
++            memberForRoleChange.map { "Change role for \($0.name.isEmpty ? "member" : $0.name)" } ?? "",
+             isPresented: Binding(
+-                get: { confirmRevoke != nil },
+-                set: { if !$0 { confirmRevoke = nil } }
++                get: { memberForRoleChange != nil },
++                set: { if !$0 { memberForRoleChange = nil } }
+             ),
+-            titleVisibility: .visible
+-        ) {
+-            Button("Revoke", role: .destructive) {
+-                if let c = confirmRevoke {
+-                    Task { await store.revoke(credId: c.cred_id) }
++            titleVisibility: .visible,
++            presenting: memberForRoleChange
++        ) { target in
++            if target.role.lowercased() == "admin" {
++                Button("Make member") {
++                    Task { await changeRole(target, to: "member") }
++                }
++            } else {
++                Button("Make admin") {
++                    Task { await changeRole(target, to: "admin") }
+                 }
+-                confirmRevoke = nil
+             }
+-            Button("Cancel", role: .cancel) { confirmRevoke = nil }
+-        } message: {
+-            Text("This passkey will no longer be able to sign in.")
++            Button("Cancel", role: .cancel) { memberForRoleChange = nil }
+         }
+     }
+ 
+-    private var avatarTint: Color {
+-        user.isAdmin ? Color.green : (user.isPending ? Color.yellow : Color.blue)
++    private func canKick(_ m: HouseholdMember) -> Bool {
++        guard isOwner else { return false }
++        if m.role.lowercased() == "owner" { return false }
++        if m.user_id == auth.authState.userId { return false }
++        return true
+     }
+ 
+-    private func passkeyRow(_ cred: APIClient.Credential) -> some View {
++    private func canChangeRole(_ m: HouseholdMember) -> Bool {
++        guard isOwner else { return false }
++        if m.role.lowercased() == "owner" { return false }
++        if m.user_id == auth.authState.userId { return false }
++        return true
++    }
++
++    private func memberRow(_ m: HouseholdMember) -> some View {
+         HStack(spacing: 12) {
+             ZStack {
+-                RoundedRectangle(cornerRadius: 7, style: .continuous)
+-                    .fill(Color.blue.opacity(0.18))
+-                Image(systemName: "key.horizontal.fill")
+-                    .font(.system(size: 13, weight: .semibold))
+-                    .foregroundColor(Color.blue)
++                Circle()
++                    .fill(Color.secondaryBackground)
++                    .frame(width: 32, height: 32)
++                Text(initials(for: m.name))
++                    .font(.outfit(13, weight: .semibold))
++                    .foregroundColor(Color.primaryLabel)
+             }
+-            .frame(width: 30, height: 30)
+-
+             VStack(alignment: .leading, spacing: 2) {
+-                Text("Passkey")
++                Text(m.name.isEmpty ? "Unnamed" : m.name)
+                     .appFont(.body)
+                     .foregroundColor(Color.primaryLabel)
+-                Text("Added \(shortDate(cred.created))")
+-                    .appFont(.footnote)
+-                    .foregroundColor(Color.secondaryLabel)
+             }
+             Spacer()
++            Text(m.role.capitalized)
++                .appFont(.footnote)
++                .foregroundColor(Color.secondaryLabel)
++            if canChangeRole(m) {
++                Image(systemName: "chevron.right")
++                    .font(.system(size: 11, weight: .semibold))
++                    .foregroundColor(Color.tertiaryLabel)
++            }
+         }
++        .padding(.vertical, 2)
+     }
+ 
+-    private func shortDate(_ iso: String) -> String {
+-        let f = ISO8601DateFormatter()
+-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+-        guard let d = f.date(from: iso) else { return "—" }
+-        let r = DateFormatter(); r.dateStyle = .medium; r.timeStyle = .none
+-        return r.string(from: d)
++    private var inviteSection: some View {
++        Section {
++            Button {
++                Task { await createInvite() }
++            } label: {
++                HStack {
++                    SettingsRow(
++                        icon: "person.crop.circle.badge.plus",
++                        tint: .green,
++                        title: "Invite someone"
++                    )
++                    Spacer()
++                    if creatingInvite {
++                        ProgressView().tint(Color.secondaryLabel).scaleEffect(0.8)
++                    }
++                }
++            }
++            .disabled(creatingInvite)
++            .listRowBackground(Color.elevatedBackground)
++        } footer: {
++            if let inviteError {
++                Text(inviteError).foregroundColor(Color.red.opacity(0.85))
++            }
++        }
++    }
++
++    private var dangerZoneSection: some View {
++        Section {
++            Button(role: .destructive) {
++                if isOwner {
++                    leaveBlockedAlert = true
++                } else {
++                    showLeaveConfirm = true
++                }
++            } label: {
++                SettingsRow(
++                    icon: "rectangle.portrait.and.arrow.forward",
++                    tint: .red,
++                    title: "Leave household",
++                    titleColor: .red
++                )
++            }
++            .listRowBackground(Color.elevatedBackground)
++            .confirmationDialog(
++                "Leave \(household.name.isEmpty ? "household" : household.name)?",
++                isPresented: $showLeaveConfirm,
++                titleVisibility: .visible
++            ) {
++                Button("Leave", role: .destructive) {
++                    Task { await leave() }
++                }
++                Button("Cancel", role: .cancel) {}
++            } message: {
++                Text("You'll lose access to this household's logs and settings. Someone will need to send you a new invite to rejoin.")
++            }
++            .alert("Owners can't leave", isPresented: $leaveBlockedAlert) {
++                Button("OK", role: .cancel) {}
++            } message: {
++                Text("Transfer ownership to another member or delete the household before leaving.")
++            }
++
++            if isOwner {
++                Button(role: .destructive) {
++                    showDeleteConfirm = true
++                } label: {
++                    SettingsRow(
++                        icon: "trash.fill",
++                        tint: .red,
++                        title: "Delete household",
++                        titleColor: .red
++                    )
++                }
++                .listRowBackground(Color.elevatedBackground)
++                .confirmationDialog(
++                    "Delete \(household.name.isEmpty ? "household" : household.name)?",
++                    isPresented: $showDeleteConfirm,
++                    titleVisibility: .visible
++                ) {
++                    Button("Delete", role: .destructive) {
++                        Task { await deleteHousehold() }
++                    }
++                    Button("Cancel", role: .cancel) {}
++                } message: {
++                    Text("All members will lose access. Logs, settings, and invites are retained but hidden. This can be reversed only via support.")
++                }
++            }
++        } header: {
++            Text("Danger Zone").foregroundColor(Color.red.opacity(0.85))
++        }
++    }
++
++    // MARK: Actions
++
++    private func loadMembers() async {
++        loadingMembers = true
++        defer { loadingMembers = false }
++        do {
++            let resp = try await APIClient.shared.listMembers(hhId: household.hh_id)
++            members = HouseholdDetailView.sortMembers(resp.members)
++            membersError = nil
++        } catch {
++            membersError = error.localizedDescription
++        }
++    }
++
++    static func sortMembers(_ members: [HouseholdMember]) -> [HouseholdMember] {
++        members.sorted { a, b in
++            let order: (String) -> Int = { r in
++                switch r.lowercased() {
++                case "owner": return 0
++                case "admin": return 1
++                default: return 2
++                }
++            }
++            let oa = order(a.role), ob = order(b.role)
++            if oa != ob { return oa < ob }
++            return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
++        }
++    }
++
++    private func kick(_ member: HouseholdMember) async {
++        memberToKick = nil
++        do {
++            try await APIClient.shared.kickMember(hhId: household.hh_id, userId: member.user_id)
++            members.removeAll { $0.user_id == member.user_id }
++        } catch {
++            membersError = error.localizedDescription
++        }
++    }
++
++    private func changeRole(_ member: HouseholdMember, to newRole: String) async {
++        memberForRoleChange = nil
++        do {
++            try await APIClient.shared.updateMemberRole(
++                hhId: household.hh_id,
++                userId: member.user_id,
++                role: newRole
++            )
++            if let idx = members.firstIndex(where: { $0.user_id == member.user_id }) {
++                members[idx] = HouseholdMember(
++                    user_id: member.user_id,
++                    name: member.name,
++                    role: newRole,
++                    joined_at: member.joined_at
++                )
++            }
++            members = HouseholdDetailView.sortMembers(members)
++            membersError = nil
++        } catch {
++            membersError = error.localizedDescription
++        }
++    }
++
++    private func createInvite() async {
++        inviteError = nil
++        creatingInvite = true
++        defer { creatingInvite = false }
++        do {
++            inviteResult = try await APIClient.shared.createInvite()
++            showInviteShare = true
++        } catch {
++            inviteError = error.localizedDescription
++        }
++    }
++
++    private func leave() async {
++        do {
++            _ = try await APIClient.shared.leaveHousehold(hhId: household.hh_id)
++            let list = try? await APIClient.shared.listHouseholds()
++            if let next = list?.households.first(where: { $0.hh_id != household.hh_id }) {
++                _ = try? await APIClient.shared.switchHousehold(hhId: next.hh_id)
++                await vm.refresh()
++                onChange()
++                dismiss()
++            } else {
++                await auth.logout()
++            }
++        } catch {
++            inviteError = error.localizedDescription
++        }
++    }
++
++    private func deleteHousehold() async {
++        do {
++            try await APIClient.shared.deleteHousehold(hhId: household.hh_id)
++            let list = try? await APIClient.shared.listHouseholds()
++            if let next = list?.households.first(where: { $0.hh_id != household.hh_id }) {
++                _ = try? await APIClient.shared.switchHousehold(hhId: next.hh_id)
++                await vm.refresh()
++                onChange()
++                dismiss()
++            } else {
++                await auth.logout()
++            }
++        } catch {
++            inviteError = error.localizedDescription
++        }
++    }
++
++    private func initials(for name: String) -> String {
++        let parts = name.split(separator: " ").prefix(2)
++        let letters = parts.compactMap { $0.first }.map { String($0) }
++        return letters.joined().uppercased().ifEmpty("·")
+     }
+ }
+ 
+-// MARK: - Invite user sheet
++private extension String {
++    func ifEmpty(_ fallback: String) -> String { isEmpty ? fallback : self }
++}
++
++// MARK: - Invite share sheet
+ 
+-struct InviteUserSheet: View {
++struct InviteShareSheet: View {
++    let invite: InviteCreateResponse
+     @Binding var isPresented: Bool
+-    let onSubmit: (String) async throws -> Void
++    @State private var justCopied = false
+ 
+-    @State private var name = ""
+-    @State private var error: String?
+-    @State private var submitting = false
+-    @FocusState private var focused: Bool
++    private var expiresText: String {
++        let remaining = invite.expires - Date().timeIntervalSince1970
++        if remaining <= 0 { return "Expired" }
++        let hours = Int(remaining / 3600)
++        if hours >= 24 { return "Expires in \(hours / 24) day\(hours / 24 == 1 ? "" : "s")" }
++        if hours >= 1 { return "Expires in \(hours) hour\(hours == 1 ? "" : "s")" }
++        let mins = max(1, Int(remaining / 60))
++        return "Expires in \(mins) min"
++    }
+ 
+-    private var trimmed: String {
+-        name.trimmingCharacters(in: .whitespaces).lowercased()
++    private var shareMessage: String {
++        let name = invite.hh_name.isEmpty ? "our household" : invite.hh_name
++        return "Join \(name) on AvantiLog. Open the app, tap Join with Invite, and paste this code: \(invite.token)"
+     }
+ 
+     var body: some View {
+         NavigationStack {
+             ZStack {
+                 Color.primaryBackground.ignoresSafeArea()
+-
+                 List {
+                     Section {
+-                        TextField("e.g. anu", text: $name)
+-                            .textContentType(.username)
+-                            .autocorrectionDisabled()
+-                            .textInputAutocapitalization(.never)
+-                            .appFont(.body)
+-                            .foregroundColor(Color.primaryLabel)
+-                            .focused($focused)
+-                            .submitLabel(.send)
+-                            .onSubmit { Task { await submit() } }
+-                            .listRowBackground(Color.elevatedBackground)
++                        VStack(alignment: .leading, spacing: 12) {
++                            HStack(spacing: 12) {
++                                Text(invite.token)
++                                    .font(.custom("Outfit", size: 22, relativeTo: .title).weight(.semibold))
++                                    .foregroundColor(Color.primaryLabel)
++                                    .monospaced()
++                                    .lineLimit(1)
++                                    .minimumScaleFactor(0.6)
++                                    .frame(maxWidth: .infinity, alignment: .leading)
++                                Button {
++                                    UIPasteboard.general.string = invite.token
++                                    withAnimation { justCopied = true }
++                                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
++                                        withAnimation { justCopied = false }
++                                    }
++                                } label: {
++                                    HStack(spacing: 6) {
++                                        Image(systemName: justCopied ? "checkmark" : "doc.on.doc")
++                                            .font(.system(size: 13, weight: .semibold))
++                                        Text(justCopied ? "Copied" : "Copy")
++                                            .font(.outfit(13, weight: .semibold))
++                                    }
++                                    .foregroundColor(Color.green)
++                                    .padding(.horizontal, 12)
++                                    .padding(.vertical, 8)
++                                    .background(Color.greenFill)
++                                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
++                                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
++                                        .stroke(Color.greenBorder, lineWidth: 1))
++                                }
++                                .buttonStyle(.plain)
++                            }
++                            Text(expiresText)
++                                .appFont(.footnote)
++                                .foregroundColor(Color.secondaryLabel)
++                        }
++                        .padding(.vertical, 4)
++                        .listRowBackground(Color.elevatedBackground)
+                     } header: {
+-                        Text("Name").foregroundColor(Color.secondaryLabel)
++                        Text("Invite code").foregroundColor(Color.secondaryLabel)
+                     } footer: {
+-                        Text("Lowercase letters only. They'll create a passkey on their first sign-in.")
++                        Text("Anyone with this code can join the household until it expires or is used.")
+                             .appFont(.footnote)
+                             .foregroundColor(Color.secondaryLabel)
+                     }
+ 
+-                    if let error {
+-                        Section {
+-                            Text(error)
+-                                .appFont(.footnote)
+-                                .foregroundColor(Color.red)
+-                                .listRowBackground(Color.elevatedBackground)
++                    Section {
++                        ShareLink(item: shareMessage) {
++                            SettingsRow(
++                                icon: "square.and.arrow.up",
++                                tint: .blue,
++                                title: "Share"
++                            )
+                         }
++                        .listRowBackground(Color.elevatedBackground)
+                     }
+                 }
+                 .listStyle(.insetGrouped)
+                 .scrollContentBackground(.hidden)
+             }
+-            .navigationTitle("Invite User")
++            .navigationTitle("Invite someone")
+             .navigationBarTitleDisplayMode(.inline)
+             .toolbar {
+-                ToolbarItem(placement: .cancellationAction) {
+-                    Button("Cancel") { isPresented = false }
+-                        .foregroundColor(Color.secondaryLabel)
+-                }
+                 ToolbarItem(placement: .confirmationAction) {
+-                    Button("Invite") { Task { await submit() } }
+-                        .disabled(submitting || trimmed.isEmpty)
++                    Button("Done") { isPresented = false }
+                 }
+             }
+-            .onAppear { focused = true }
+-        }
+-    }
+-
+-    private func submit() async {
+-        guard !trimmed.isEmpty, !submitting else { return }
+-        error = nil; submitting = true
+-        defer { submitting = false }
+-        do {
+-            try await onSubmit(trimmed)
+-            isPresented = false
+-        } catch {
+-            self.error = error.localizedDescription
+         }
+     }
+ }
+diff --git a/ios/project.yml b/ios/project.yml
+index 2220aa1..1ffaa82 100644
+--- a/ios/project.yml
++++ b/ios/project.yml
+@@ -6,11 +6,16 @@ options:
+   defaultConfig: Debug
+   xcodeVersion: "16"
+ 
++configs:
++  Debug: debug
++  Release: release
++  DevRelease: release
++
+ settings:
+   base:
+     SWIFT_VERSION: "6.0"
+     MARKETING_VERSION: "1.0.0"
+-    CURRENT_PROJECT_VERSION: "28"
++    CURRENT_PROJECT_VERSION: "36"
+ 
+ targets:
+   FormulaHelper:
+@@ -23,6 +28,8 @@ targets:
+     info:
+       path: FormulaHelper/Info.plist
+       properties:
++        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
++        CFBundleShortVersionString: $(MARKETING_VERSION)
+         UILaunchScreen: {}
+         UISupportedInterfaceOrientations:
+           - UIInterfaceOrientationPortrait
+@@ -31,36 +38,50 @@ targets:
+           - UIInterfaceOrientationPortraitUpsideDown
+           - UIInterfaceOrientationLandscapeLeft
+           - UIInterfaceOrientationLandscapeRight
+-        CFBundleDisplayName: Formula Helper
++        CFBundleDisplayName: $(APP_DISPLAY_NAME)
+         ITSAppUsesNonExemptEncryption: false
+         NSSupportsLiveActivities: true
++        APIBaseURL: $(API_BASE_URL)
++        RPID: $(RP_ID)
++        IsDevStack: $(IS_DEV_STACK)
+         UIAppFonts:
+           - Outfit-Variable.ttf
+     settings:
+       base:
+-        PRODUCT_BUNDLE_IDENTIFIER: com.ashokteja.formulahelper
++        APP_DISPLAY_NAME: Formula Helper
+         INFOPLIST_FILE: FormulaHelper/Info.plist
+         DEVELOPMENT_TEAM: "TV6FL9FHCE"
+         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+       configs:
+         Debug:
++          PRODUCT_BUNDLE_IDENTIFIER: com.ashokteja.formulahelper
+           CODE_SIGN_STYLE: Automatic
+-          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "DEBUG DEV_STACK"
++          CODE_SIGN_ENTITLEMENTS: FormulaHelper/FormulaHelper.Dev.entitlements
++          API_BASE_URL: https://3lgqmzurih.execute-api.us-east-1.amazonaws.com
++          RP_ID: 3lgqmzurih.execute-api.us-east-1.amazonaws.com
++          IS_DEV_STACK: "YES"
+         Release:
++          PRODUCT_BUNDLE_IDENTIFIER: com.ashokteja.formulahelper
+           CODE_SIGN_STYLE: Manual
+           CODE_SIGN_IDENTITY: "Apple Distribution: ASHOK TEJA GADEPALLI (TV6FL9FHCE)"
+           PROVISIONING_PROFILE_SPECIFIER: FormulaHelperAppStore
+           PROVISIONING_PROFILE: "0a11f570-f456-4eb4-a271-4a5198020e68"
+-    entitlements:
+-      path: FormulaHelper/FormulaHelper.entitlements
+-      properties:
+-        com.apple.developer.associated-domains:
+-          - webcredentials:d20oyc88hlibbe.cloudfront.net
+-          - webcredentials:d20oyc88hlibbe.cloudfront.net?mode=developer
+-          - webcredentials:3lgqmzurih.execute-api.us-east-1.amazonaws.com
+-          - webcredentials:3lgqmzurih.execute-api.us-east-1.amazonaws.com?mode=developer
+-        com.apple.security.application-groups:
+-          - group.com.ashokteja.formulahelper
++          CODE_SIGN_ENTITLEMENTS: FormulaHelper/FormulaHelper.Prod.entitlements
++          API_BASE_URL: https://d20oyc88hlibbe.cloudfront.net
++          RP_ID: d20oyc88hlibbe.cloudfront.net
++          IS_DEV_STACK: "NO"
++        DevRelease:
++          PRODUCT_BUNDLE_IDENTIFIER: com.ashokteja.formulahelper.dev
++          APP_DISPLAY_NAME: Formula Helper Dev
++          ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon-Dev
++          CODE_SIGN_STYLE: Manual
++          CODE_SIGN_IDENTITY: "Apple Distribution: ASHOK TEJA GADEPALLI (TV6FL9FHCE)"
++          PROVISIONING_PROFILE_SPECIFIER: AvantiLog Dev AppStore
++          PROVISIONING_PROFILE: "bb29651f-0741-4bf3-9504-551e54bca853"
++          CODE_SIGN_ENTITLEMENTS: FormulaHelper/FormulaHelper.Dev.entitlements
++          API_BASE_URL: https://3lgqmzurih.execute-api.us-east-1.amazonaws.com
++          RP_ID: 3lgqmzurih.execute-api.us-east-1.amazonaws.com
++          IS_DEV_STACK: "YES"
+     dependencies:
+       - sdk: Charts.framework
+       - target: FormulaHelperWidgets
+@@ -81,13 +102,20 @@ targets:
+           NSExtensionPointIdentifier: com.apple.widgetkit-extension
+     settings:
+       base:
+-        PRODUCT_BUNDLE_IDENTIFIER: com.ashokteja.formulahelper.widgets
+         DEVELOPMENT_TEAM: "TV6FL9FHCE"
+       configs:
+         Debug:
++          PRODUCT_BUNDLE_IDENTIFIER: com.ashokteja.formulahelper.widgets
+           CODE_SIGN_STYLE: Automatic
+         Release:
++          PRODUCT_BUNDLE_IDENTIFIER: com.ashokteja.formulahelper.widgets
+           CODE_SIGN_STYLE: Manual
+           CODE_SIGN_IDENTITY: "Apple Distribution: ASHOK TEJA GADEPALLI (TV6FL9FHCE)"
+           PROVISIONING_PROFILE_SPECIFIER: FormulaHelperWidgetsAppStore
+           PROVISIONING_PROFILE: "efbe7ee5-50ea-4876-98f9-98a0300c043e"
++        DevRelease:
++          PRODUCT_BUNDLE_IDENTIFIER: com.ashokteja.formulahelper.dev.widgets
++          CODE_SIGN_STYLE: Manual
++          CODE_SIGN_IDENTITY: "Apple Distribution: ASHOK TEJA GADEPALLI (TV6FL9FHCE)"
++          PROVISIONING_PROFILE_SPECIFIER: AvantiLog Dev Widgets AppStore
++          PROVISIONING_PROFILE: "397a61d7-fcb1-4ad3-a672-284b1fea477e"
+diff --git a/lambda/handler.py b/lambda/handler.py
+index 6f28bd3..07501c2 100644
+--- a/lambda/handler.py
++++ b/lambda/handler.py
+@@ -160,6 +160,41 @@ def _require_member(session: dict, hh_id: str):
+         return None, _json({"error": "Forbidden"}, 403)
+     return _decimal_to_native(item), None
+ 
++# Capability map — which roles can perform which actions. Add rows, don't migrate schema.
++ROLE_CAPS: dict[str, set[str]] = {
++    "owner":  {"invite", "kick", "change_role", "transfer_ownership", "delete_household", "log", "leave"},
++    "admin":  {"invite", "kick", "log", "leave"},
++    "member": {"log", "leave"},
++}
++
++def _can(role: str, action: str) -> bool:
++    return action in ROLE_CAPS.get(role, set())
++
++def _require_capability(session: dict, hh_id: str, action: str):
++    """Returns (member_item, error_response). 403 if not a member or role lacks action."""
++    member, err = _require_member(session, hh_id)
++    if err:
++        return None, err
++    if not _can(member.get("role", ""), action):
++        return None, _json({"error": "Forbidden"}, 403)
++    return member, None
++
++def _remove_membership(hh_id: str, user_id: str):
++    """Drop both forward and mirror membership records."""
++    table.delete_item(Key={"PK": f"USER#{user_id}", "SK": f"HH#{hh_id}"})
++    table.delete_item(Key={"PK": f"HH#{hh_id}", "SK": f"MEMBER#{user_id}"})
++
++def _update_membership_role(hh_id: str, user_id: str, role: str):
++    """Update role on both forward and mirror records."""
++    for key in ({"PK": f"USER#{user_id}", "SK": f"HH#{hh_id}"},
++                {"PK": f"HH#{hh_id}", "SK": f"MEMBER#{user_id}"}):
++        table.update_item(
++            Key=key,
++            UpdateExpression="SET #r = :r",
++            ExpressionAttributeNames={"#r": "role"},
++            ExpressionAttributeValues={":r": role},
++        )
++
+ # ── Challenges (per-session, short-lived) ────────────────────────────────────
+ 
+ def _put_challenge(challenge_b64: str, purpose: str, extra: dict | None = None) -> str:
+@@ -262,7 +297,7 @@ def _list_credentials_for_user(user_id: str) -> list[dict]:
+ 
+ # ── Households / memberships ─────────────────────────────────────────────────
+ 
+-def _create_household(name: str, owner_uid: str) -> str:
++def _create_household(name: str, owner_uid: str, child_name: str = "", child_dob: str = "") -> str:
+     hh_id = _new_id("h_")
+     now = _iso_now()
+     table.put_item(Item={
+@@ -271,6 +306,8 @@ def _create_household(name: str, owner_uid: str) -> str:
+         "hh_id": hh_id,
+         "name": name,
+         "owner_uid": owner_uid,
++        "child_name": child_name,
++        "child_dob": child_dob,
+         "created_at": now,
+     })
+     _add_membership(hh_id, owner_uid, role="owner", hh_name=name)
+@@ -387,6 +424,8 @@ def auth_register_start(event):
+     user_name = (data.get("user_name") or "").strip()
+     invite_token = data.get("invite_token") or ""
+     household_name = (data.get("household_name") or "").strip()
++    child_name = (data.get("child_name") or "").strip()
++    child_dob = (data.get("child_dob") or "").strip()
+ 
+     if not siwa_token or not user_name:
+         return _json({"error": "siwa_id_token and user_name required"}, 400)
+@@ -438,6 +477,8 @@ def auth_register_start(event):
+             "user_name": user_name,
+             "invite_token": invite_token,
+             "household_name": household_name,
++            "child_name": child_name,
++            "child_dob": child_dob,
+         },
+     )
+ 
+@@ -494,7 +535,12 @@ def auth_register_finish(event):
+         hh_name = invite.get("hh_name", "")
+         _add_membership(hh_id, user_id, role="member", hh_name=hh_name)
+     else:
+-        hh_id = _create_household(household_name, owner_uid=user_id)
++        hh_id = _create_household(
++            household_name,
++            owner_uid=user_id,
++            child_name=ctx.get("child_name") or "",
++            child_dob=ctx.get("child_dob") or "",
++        )
+ 
+     token, _ = _create_session(user_id, active_hh=hh_id)
+     return _json(
+@@ -627,6 +673,42 @@ def auth_recover_finish(event):
+         cookies=[_session_cookie(token)],
+     )
+ 
++def auth_dev_login(event):
++    """Dev-only backdoor: mint a session for a synthetic user without SIWA/passkey.
++    Returns 404 unless STAGE == 'dev', so this route effectively does not exist on prod."""
++    if STAGE != "dev":
++        return _json({"error": "Not found"}, 404)
++
++    user_id = "dev-sim-user"
++    user = _get_user(user_id)
++    if not user:
++        _put_user(user_id, apple_sub="dev-sim", name="Sim User", email="sim@example.invalid")
++
++    # Reuse an OWNED, NON-DELETED household if one exists; otherwise create a fresh
++    # Sim Household so the dev user always lands as owner (owner-gated UI testing).
++    hh_id = None
++    for m in _list_memberships(user_id):
++        if m.get("role") != "owner":
++            continue
++        hh = _get_household(m["hh_id"])
++        if not hh or hh.get("deleted_at"):
++            continue
++        hh_id = m["hh_id"]
++        break
++    if hh_id is None:
++        hh_id = _create_household(
++            "Sim Household",
++            owner_uid=user_id,
++            child_name="Sim Baby",
++            child_dob="2025-01-01",
++        )
++
++    token, _ = _create_session(user_id, active_hh=hh_id)
++    return _json(
++        {"ok": True, "user_id": user_id, "active_hh": hh_id},
++        cookies=[_session_cookie(token)],
++    )
++
+ def auth_logout(event):
+     token = _session_token_from_event(event)
+     if token:
+@@ -640,13 +722,14 @@ def households_list(event):
+     if err:
+         return err
+     memberships = _list_memberships(session["user_id"])
+-    return _json({
+-        "active_hh": session.get("active_hh", ""),
+-        "households": [
+-            {"hh_id": m["hh_id"], "name": m.get("hh_name", ""), "role": m.get("role", "")}
+-            for m in memberships
+-        ],
+-    })
++    # Filter out soft-deleted households
++    out = []
++    for m in memberships:
++        hh = _get_household(m["hh_id"])
++        if not hh or hh.get("deleted_at"):
++            continue
++        out.append({"hh_id": m["hh_id"], "name": m.get("hh_name", ""), "role": m.get("role", "")})
++    return _json({"active_hh": session.get("active_hh", ""), "households": out})
+ 
+ def households_create(event):
+     session, err = _require_session(event)
+@@ -706,6 +789,127 @@ def household_members_list(event):
+         })
+     return _json({"members": out})
+ 
++def household_member_update(event):
++    """PUT /api/households/{hh_id}/members/{user_id} — change role. Owner only."""
++    session, err = _require_session(event)
++    if err:
++        return err
++    params = event.get("pathParameters", {}) or {}
++    hh_id = params.get("hh_id", "")
++    target_uid = params.get("user_id", "")
++    _, cap_err = _require_capability(session, hh_id, "change_role")
++    if cap_err:
++        return cap_err
++    data = _parse_body(event)
++    new_role = (data.get("role") or "").strip()
++    if new_role not in ROLE_CAPS:
++        return _json({"error": "Invalid role"}, 400)
++    if new_role == "owner":
++        return _json({"error": "Use /transfer to make someone owner"}, 400)
++    target = table.get_item(Key={"PK": f"HH#{hh_id}", "SK": f"MEMBER#{target_uid}"}).get("Item")
++    if not target:
++        return _json({"error": "Member not found"}, 404)
++    if target.get("role") == "owner":
++        return _json({"error": "Cannot demote owner directly; transfer ownership first"}, 400)
++    _update_membership_role(hh_id, target_uid, new_role)
++    return _json({"ok": True})
++
++def household_member_remove(event):
++    """DELETE /api/households/{hh_id}/members/{user_id} — kick."""
++    session, err = _require_session(event)
++    if err:
++        return err
++    params = event.get("pathParameters", {}) or {}
++    hh_id = params.get("hh_id", "")
++    target_uid = params.get("user_id", "")
++    actor, cap_err = _require_capability(session, hh_id, "kick")
++    if cap_err:
++        return cap_err
++    if target_uid == session["user_id"]:
++        return _json({"error": "Use /leave to remove yourself"}, 400)
++    target = table.get_item(Key={"PK": f"HH#{hh_id}", "SK": f"MEMBER#{target_uid}"}).get("Item")
++    if not target:
++        return _json({"error": "Member not found"}, 404)
++    if target.get("role") == "owner":
++        return _json({"error": "Cannot kick owner"}, 403)
++    # Admin cannot kick another admin
++    if actor.get("role") == "admin" and target.get("role") == "admin":
++        return _json({"error": "Admins cannot kick other admins"}, 403)
++    _remove_membership(hh_id, target_uid)
++    return _json({"ok": True})
++
++def household_leave(event):
++    """POST /api/households/{hh_id}/leave — current user leaves. Owner must transfer or delete first."""
++    session, err = _require_session(event)
++    if err:
++        return err
++    hh_id = (event.get("pathParameters", {}) or {}).get("hh_id", "")
++    member, cap_err = _require_capability(session, hh_id, "leave")
++    if cap_err:
++        return cap_err
++    if member.get("role") == "owner":
++        return _json({"error": "Transfer ownership or delete the household before leaving"}, 400)
++    _remove_membership(hh_id, session["user_id"])
++    # If they were actively in this household, clear active_hh
++    if session.get("active_hh") == hh_id:
++        token = _session_token_from_event(event)
++        table.update_item(
++            Key={"PK": f"SESS#{token}", "SK": "META"},
++            UpdateExpression="SET active_hh = :e",
++            ExpressionAttributeValues={":e": ""},
++        )
++    return _json({"ok": True})
++
++def household_transfer(event):
++    """POST /api/households/{hh_id}/transfer — owner transfers ownership to another member.
++    Current owner becomes admin."""
++    session, err = _require_session(event)
++    if err:
++        return err
++    hh_id = (event.get("pathParameters", {}) or {}).get("hh_id", "")
++    _, cap_err = _require_capability(session, hh_id, "transfer_ownership")
++    if cap_err:
++        return cap_err
++    data = _parse_body(event)
++    target_uid = (data.get("user_id") or "").strip()
++    if not target_uid or target_uid == session["user_id"]:
++        return _json({"error": "Invalid target"}, 400)
++    target = table.get_item(Key={"PK": f"HH#{hh_id}", "SK": f"MEMBER#{target_uid}"}).get("Item")
++    if not target:
++        return _json({"error": "Member not found"}, 404)
++    _update_membership_role(hh_id, target_uid, "owner")
++    _update_membership_role(hh_id, session["user_id"], "admin")
++    table.update_item(
++        Key={"PK": f"HH#{hh_id}", "SK": "META"},
++        UpdateExpression="SET owner_uid = :u",
++        ExpressionAttributeValues={":u": target_uid},
++    )
++    return _json({"ok": True})
++
++def household_delete(event):
++    """DELETE /api/households/{hh_id} — soft-delete the household. Owner only."""
++    session, err = _require_session(event)
++    if err:
++        return err
++    hh_id = (event.get("pathParameters", {}) or {}).get("hh_id", "")
++    _, cap_err = _require_capability(session, hh_id, "delete_household")
++    if cap_err:
++        return cap_err
++    table.update_item(
++        Key={"PK": f"HH#{hh_id}", "SK": "META"},
++        UpdateExpression="SET deleted_at = :t",
++        ExpressionAttributeValues={":t": _iso_now()},
++    )
++    # Clear active_hh on caller's session if pointing here
++    if session.get("active_hh") == hh_id:
++        token = _session_token_from_event(event)
++        table.update_item(
++            Key={"PK": f"SESS#{token}", "SK": "META"},
++            UpdateExpression="SET active_hh = :e",
++            ExpressionAttributeValues={":e": ""},
++        )
++    return _json({"ok": True})
++
+ # ── Invite handlers ──────────────────────────────────────────────────────────
+ 
+ def invite_preview(event):
+@@ -727,9 +931,9 @@ def invite_create(event):
+     hh_id = session.get("active_hh") or ""
+     if not hh_id:
+         return _json({"error": "No active household"}, 400)
+-    _, mem_err = _require_member(session, hh_id)
+-    if mem_err:
+-        return mem_err
++    _, cap_err = _require_capability(session, hh_id, "invite")
++    if cap_err:
++        return cap_err
+     hh = _get_household(hh_id) or {}
+     inv = _create_invite(hh_id, hh.get("name", ""), inviter_uid=session["user_id"])
+     return _json({
+@@ -1175,6 +1379,7 @@ PUBLIC_ROUTES = [
+     ("POST",   r"^/api/auth/recover/start$",      auth_recover_start),
+     ("POST",   r"^/api/auth/recover/finish$",     auth_recover_finish),
+     ("POST",   r"^/api/auth/logout$",             auth_logout),
++    ("POST",   r"^/api/auth/dev-login$",           auth_dev_login),
+     ("GET",    r"^/api/invites/(?P<token>[^/]+)$", invite_preview),
+ ]
+ 
+@@ -1183,6 +1388,11 @@ PROTECTED_ROUTES = [
+     ("POST",   r"^/api/households$",              households_create),
+     ("POST",   r"^/api/households/switch$",       households_switch),
+     ("GET",    r"^/api/households/(?P<hh_id>[^/]+)/members$", household_members_list),
++    ("PUT",    r"^/api/households/(?P<hh_id>[^/]+)/members/(?P<user_id>[^/]+)$", household_member_update),
++    ("DELETE", r"^/api/households/(?P<hh_id>[^/]+)/members/(?P<user_id>[^/]+)$", household_member_remove),
++    ("POST",   r"^/api/households/(?P<hh_id>[^/]+)/leave$",    household_leave),
++    ("POST",   r"^/api/households/(?P<hh_id>[^/]+)/transfer$", household_transfer),
++    ("DELETE", r"^/api/households/(?P<hh_id>[^/]+)$",          household_delete),
+     ("POST",   r"^/api/invites$",                 invite_create),
+     ("POST",   r"^/api/invites/(?P<token>[^/]+)/redeem$", invite_redeem),
+     ("GET",    r"^/api/state$",                   get_state),
+diff --git a/template-dev.yaml b/template-dev.yaml
+index 5423490..cee0b14 100644
+--- a/template-dev.yaml
++++ b/template-dev.yaml
+@@ -54,8 +54,8 @@ Resources:
+           VAPID_PUBLIC_KEY: dev-disabled
+           STAGE: dev
+           APPLE_TEAM_ID: TV6FL9FHCE
+-          APPLE_BUNDLE_ID: com.ashokteja.formulahelper
+-          SIWA_AUDIENCE: com.ashokteja.formulahelper
++          APPLE_BUNDLE_ID: com.ashokteja.formulahelper.dev
++          SIWA_AUDIENCE: com.ashokteja.formulahelper.dev
+       Policies:
+         - DynamoDBCrudPolicy:
+             TableName: !Ref FormulaTable
