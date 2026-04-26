@@ -328,6 +328,10 @@ struct HeroCard: View {
 private struct BannerContent: View {
     @ObservedObject var vm: StateViewModel
     let now: Date   // driven by TimelineView — guarantees 1s re-render
+    @AppStorage("dashboardLabelScale") private var dashboardLabelScale: Double = 1.0
+
+    private var aboveTimerFont: Font { .custom("Outfit", size: 15 * dashboardLabelScale) }
+    private var belowTimerFont: Font { .custom("Outfit", size: 17 * dashboardLabelScale) }
 
     private var liveRemaining: Double {
         guard let end = vm.state?.countdown_end, end > 0 else { return -1 }
@@ -378,7 +382,7 @@ private struct BannerContent: View {
                             .foregroundColor(Color.tertiaryLabel)
                     } else if isExpired {
                         Text("Bottle expired — mixed at \(state.mixed_at_str)".uppercased())
-                            .appFont(.subheadline)
+                            .font(aboveTimerFont)
                             .tracking(1.5)
                             .foregroundColor(Color.red.opacity(0.7))
                         Text("DISCARD")
@@ -386,7 +390,10 @@ private struct BannerContent: View {
                             .foregroundColor(Color.red)
                             .tracking(-0.5)
                     } else {
-                        subLabel("\(state.mixed_ml)ml mixed at \(state.mixed_at_str)", expired: false)
+                        Text("\(state.mixed_ml)ml mixed at \(state.mixed_at_str)".uppercased())
+                            .font(aboveTimerFont)
+                            .tracking(1.5)
+                            .foregroundColor(Color.secondaryLabel)
                         Text(formatTimer(liveRemaining))
                             .font(.custom("Outfit", size: 72, relativeTo: .largeTitle).bold())
                             .foregroundColor(Color.green)
@@ -396,7 +403,7 @@ private struct BannerContent: View {
 
                     if let est = vm.nextFeedingEstimate {
                         Text(est)
-                            .appFont(isExpired ? .body : .subheadline)
+                            .font(belowTimerFont)
                             .tracking(1.2)
                             .foregroundColor(isExpired ? Color.red.opacity(0.6) : Color.secondaryLabel)
                             .padding(.top, 4)
@@ -404,7 +411,7 @@ private struct BannerContent: View {
 
                     if isExpired, let secs = sinceMixedSecs {
                         Text(formatSinceMixed(secs))
-                            .appFont(.body)
+                            .font(belowTimerFont)
                             .tracking(1.2)
                             .foregroundColor(Color.red.opacity(0.6))
                             .padding(.top, 4)
