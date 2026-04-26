@@ -341,6 +341,23 @@ private struct BannerContent: View {
 
     private var hasBottle: Bool { (vm.state?.countdown_end ?? 0) > 0 }
 
+    /// Seconds elapsed since the most recent bottle was mixed.
+    /// Derived from `countdown_end - countdown_secs` (the mix instant the server anchored to).
+    private var sinceMixedSecs: Double? {
+        guard let state = vm.state, state.countdown_end > 0 else { return nil }
+        let mixedAt = state.countdown_end - Double(state.settings.countdown_secs)
+        let elapsed = now.timeIntervalSince1970 - mixedAt
+        return elapsed > 0 ? elapsed : nil
+    }
+
+    private func formatSinceMixed(_ secs: Double) -> String {
+        let total = Int(secs)
+        let h = total / 3600
+        let m = (total % 3600) / 60
+        if h > 0 { return "\(h)h \(m)m since last bottle" }
+        return "\(m)m since last bottle"
+    }
+
     var body: some View {
         ZStack {
             if isExpired {
@@ -379,6 +396,14 @@ private struct BannerContent: View {
                             .appFont(.subheadline)
                             .tracking(1.2)
                             .foregroundColor(isExpired ? Color.red.opacity(0.6) : Color.secondaryLabel)
+                            .padding(.top, 4)
+                    }
+
+                    if isExpired, let secs = sinceMixedSecs {
+                        Text(formatSinceMixed(secs))
+                            .appFont(.subheadline)
+                            .tracking(1.2)
+                            .foregroundColor(Color.red.opacity(0.6))
                             .padding(.top, 4)
                     }
                 } else {
