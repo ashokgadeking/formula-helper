@@ -866,6 +866,10 @@ def post_log(event):
         "created_by": "manual",
     })
 
+    # Re-anchor the timer to the latest feed entry (which may now be this one,
+    # or may still be a more recent entry if this was a backfill).
+    _restore_state_from_log()
+
     return _json_response({"ok": True, "sk": sk})
 
 
@@ -912,6 +916,10 @@ def put_log(event):
         table.update_item(**update_kwargs)
     except dynamodb.meta.client.exceptions.ConditionalCheckFailedException:
         return _json_response({"ok": False, "error": "entry not found"}, 404)
+
+    # Edits can change the date or ml of any entry — including the most recent
+    # one — so re-derive the timer from whatever the latest entry is now.
+    _restore_state_from_log()
 
     return _json_response({"ok": True})
 
