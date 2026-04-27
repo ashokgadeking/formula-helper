@@ -11,9 +11,9 @@ No GSIs today. One scan-with-filter exists (`_list_credentials_for_user`) — to
 | `USER#<uid>` | `PROFILE` | Canonical user profile: `user_id`, `apple_sub`, `name`, `email`, `created_at` |
 | `USER#<uid>` | `HH#<hid>` | Forward membership: `hh_id`, `hh_name`, `role`, `joined_at` |
 | `APPLESUB#<sub>` | `LOOKUP` | Reverse SIWA lookup: `user_id` |
-| `CRED#<cred_id_b64>` | `CRED` | Passkey: `credential_id`, `user_id`, `public_key` (base64url), `sign_count`, `label`, `created_at` |
+| ~~`CRED#<cred_id_b64>`~~ | ~~`CRED`~~ | **Dead schema (Story 2.1).** Formerly the passkey credential record. Orphan rows may exist; nothing reads them. Cleanup deferred. |
 | `SESS#<token>` | `META` | Session: `user_id`, `active_hh`, `ttl`, `created_at` (TTL = 30 days, enforced via DynamoDB TTL on `ttl`) |
-| `CHAL#<cid>` | `<purpose>` | One-shot WebAuthn challenge; `purpose ∈ {registration, login, recovery}`; 5-min TTL. Deleted on use. |
+| ~~`CHAL#<cid>`~~ | ~~`<purpose>`~~ | **Dead schema (Story 2.1).** Formerly one-shot WebAuthn challenges; not written by any handler now. |
 | `HH#<hid>` | `META` | Household: `hh_id`, `name`, `owner_uid`, `child_name`, `child_dob`, `created_at` |
 | `HH#<hid>` | `SETTINGS` | Per-household settings: `countdown_secs`, `preset1_ml`, `preset2_ml`, `ss_timeout_min` |
 | `HH#<hid>` | `MEMBER#<uid>` | Mirror membership: `user_id`, `role`, `joined_at` |

@@ -23,14 +23,6 @@ from boto3.dynamodb.conditions import Key
 import jwt
 from jwt import PyJWKClient
 
-import webauthn
-from webauthn.helpers import bytes_to_base64url, base64url_to_bytes
-from webauthn.helpers.structs import (
-    AuthenticatorSelectionCriteria,
-    PublicKeyCredentialDescriptor,
-    ResidentKeyRequirement,
-    UserVerificationRequirement,
-)
 
 # ── Config ───────────────────────────────────────────────────────────────────
 
@@ -286,36 +278,6 @@ def _user_id_for_apple_sub(apple_sub: str) -> str | None:
     item = table.get_item(Key={"PK": f"APPLESUB#{apple_sub}", "SK": "LOOKUP"}).get("Item")
     return item.get("user_id") if item else None
 
-def _put_credential(cred_id_b64: str, user_id: str, public_key: bytes, sign_count: int, label: str = ""):
-    table.put_item(Item={
-        "PK": f"CRED#{cred_id_b64}",
-        "SK": "CRED",
-        "credential_id": cred_id_b64,
-        "user_id": user_id,
-        "public_key": bytes_to_base64url(public_key),
-        "sign_count": sign_count,
-        "label": label,
-        "created_at": _iso_now(),
-    })
-
-def _get_credential(cred_id_b64: str) -> dict | None:
-    item = table.get_item(Key={"PK": f"CRED#{cred_id_b64}", "SK": "CRED"}).get("Item")
-    return _decimal_to_native(item) if item else None
-
-def _update_sign_count(cred_id_b64: str, new_count: int):
-    table.update_item(
-        Key={"PK": f"CRED#{cred_id_b64}", "SK": "CRED"},
-        UpdateExpression="SET sign_count = :c",
-        ExpressionAttributeValues={":c": new_count},
-    )
-
-def _list_credentials_for_user(user_id: str) -> list[dict]:
-    # Scan-like: in dev volume this is fine. At scale add a GSI on user_id.
-    resp = table.scan(
-        FilterExpression=Key("PK").begins_with("CRED#"),
-    )
-    return [_decimal_to_native(i) for i in resp.get("Items", []) if i.get("user_id") == user_id]
-
 # ── Households / memberships ─────────────────────────────────────────────────
 
 def _create_household(name: str, owner_uid: str, child_name: str = "", child_dob: str = "") -> str:
@@ -432,198 +394,19 @@ def auth_status(event):
         "active_hh": session.get("active_hh", ""),
     })
 
-def auth_register_start(event):
+def auth_siwa(event):
+    """Single auth endpoint — sign in or sign up via Sign in with Apple.
+
+    Two-step flow:
+      1. Client posts {siwa_id_token}. If the apple_sub already maps to a user,
+         issue a session and return {returning: true}. If not, return 412 with
+         a "needs" array describing the setup the client must collect.
+      2. Client posts {siwa_id_token, user_name, household_name|invite_token,
+         child_name?, child_dob?}. Server creates the user + household (or
+         joins via invite), issues a session, returns {returning: false}.
     """
-    Begin signup. Two flavors:
-      - With invite_token: SIWA required; will join existing household.
-      - Without invite_token: SIWA required; will create a new household.
-    Body: { siwa_id_token: str, invite_token?: str, household_name?: str, user_name: str }
-    Returns passkey registration options + challenge_id.
-    """
     data = _parse_body(event)
-    siwa_token = data.get("siwa_id_token") or ""
-    user_name = (data.get("user_name") or "").strip()
-    invite_token = data.get("invite_token") or ""
-    household_name = (data.get("household_name") or "").strip()
-    child_name = (data.get("child_name") or "").strip()
-    child_dob = (data.get("child_dob") or "").strip()
-
-    if not siwa_token or not user_name:
-        return _json({"error": "siwa_id_token and user_name required"}, 400)
-
-    try:
-        claims = _verify_siwa(siwa_token)
-    except Exception as e:
-        return _json({"error": f"SIWA verification failed: {e}"}, 400)
-
-    apple_sub = claims["sub"]
-    email = claims.get("email")
-
-    # Reject if this apple_sub already has a user (use login instead)
-    if _user_id_for_apple_sub(apple_sub):
-        return _json({"error": "Account already exists for this Apple ID. Sign in instead."}, 409)
-
-    # Invite path: validate invite up front so we fail fast
-    invite = None
-    if invite_token:
-        invite = _get_invite(invite_token)
-        if not invite or invite.get("used_at") or invite.get("expires", 0) < _now():
-            return _json({"error": "Invite is invalid or expired"}, 400)
-    elif not household_name:
-        return _json({"error": "household_name required when no invite_token"}, 400)
-
-    # Pre-mint user_id so we can bind the future credential to it
-    user_id = _new_id("u_")
-
-    options = webauthn.generate_registration_options(
-        rp_id=RP_ID,
-        rp_name=RP_NAME,
-        user_id=user_id.encode(),
-        user_name=user_name,
-        user_display_name=user_name,
-        authenticator_selection=AuthenticatorSelectionCriteria(
-            resident_key=ResidentKeyRequirement.PREFERRED,
-            user_verification=UserVerificationRequirement.PREFERRED,
-        ),
-    )
-
-    challenge_b64 = bytes_to_base64url(options.challenge)
-    cid = _put_challenge(
-        challenge_b64,
-        purpose="register",
-        extra={
-            "user_id": user_id,
-            "apple_sub": apple_sub,
-            "email": email or "",
-            "user_name": user_name,
-            "invite_token": invite_token,
-            "household_name": household_name,
-            "child_name": child_name,
-            "child_dob": child_dob,
-        },
-    )
-
-    return _json({
-        "challenge_id": cid,
-        "options": json.loads(webauthn.options_to_json(options)),
-    })
-
-def auth_register_finish(event):
-    """Body: { challenge_id, credential: <WebAuthn attestation response> }"""
-    data = _parse_body(event)
-    cid = data.get("challenge_id") or ""
-    credential = data.get("credential") or {}
-
-    ctx = _pop_challenge(cid, "register")
-    if not ctx:
-        return _json({"error": "Challenge expired or invalid"}, 400)
-
-    try:
-        verification = webauthn.verify_registration_response(
-            credential=credential,
-            expected_challenge=base64url_to_bytes(ctx["challenge"]),
-            expected_rp_id=RP_ID,
-            expected_origin=RP_ORIGIN,
-        )
-    except Exception as e:
-        return _json({"error": str(e)}, 400)
-
-    user_id = ctx["user_id"]
-    apple_sub = ctx["apple_sub"]
-    user_name = ctx["user_name"]
-    invite_token = ctx.get("invite_token") or ""
-    household_name = ctx.get("household_name") or ""
-
-    # Create USER
-    _put_user(user_id, apple_sub=apple_sub, name=user_name, email=ctx.get("email"))
-
-    # Store credential
-    cred_id_b64 = bytes_to_base64url(verification.credential_id)
-    _put_credential(
-        cred_id_b64,
-        user_id=user_id,
-        public_key=verification.credential_public_key,
-        sign_count=verification.sign_count,
-        label="primary",
-    )
-
-    # Household: invite → join, else create
-    if invite_token:
-        invite = _consume_invite(invite_token)
-        if not invite:
-            return _json({"error": "Invite was consumed or expired"}, 400)
-        hh_id = invite["hh_id"]
-        hh_name = invite.get("hh_name", "")
-        _add_membership(hh_id, user_id, role="member", hh_name=hh_name)
-    else:
-        hh_id = _create_household(
-            household_name,
-            owner_uid=user_id,
-            child_name=ctx.get("child_name") or "",
-            child_dob=ctx.get("child_dob") or "",
-        )
-
-    token, _ = _create_session(user_id, active_hh=hh_id)
-    return _json(
-        {"ok": True, "user_id": user_id, "active_hh": hh_id},
-        cookies=[_session_cookie(token)],
-    )
-
-def auth_login_options(event):
-    options = webauthn.generate_authentication_options(
-        rp_id=RP_ID,
-        user_verification=UserVerificationRequirement.PREFERRED,
-    )
-    challenge_b64 = bytes_to_base64url(options.challenge)
-    cid = _put_challenge(challenge_b64, purpose="login")
-    return _json({
-        "challenge_id": cid,
-        "options": json.loads(webauthn.options_to_json(options)),
-    })
-
-def auth_login_verify(event):
-    data = _parse_body(event)
-    cid = data.get("challenge_id") or ""
-    credential = data.get("credential") or {}
-
-    ctx = _pop_challenge(cid, "login")
-    if not ctx:
-        return _json({"error": "Challenge expired or invalid"}, 400)
-
-    cred_id_b64 = credential.get("id", "")
-    cred = _get_credential(cred_id_b64)
-    if not cred:
-        return _json({"error": "Unknown credential"}, 400)
-
-    try:
-        verification = webauthn.verify_authentication_response(
-            credential=credential,
-            expected_challenge=base64url_to_bytes(ctx["challenge"]),
-            expected_rp_id=RP_ID,
-            expected_origin=RP_ORIGIN,
-            credential_public_key=base64url_to_bytes(cred["public_key"]),
-            credential_current_sign_count=int(cred.get("sign_count", 0)),
-        )
-    except Exception as e:
-        return _json({"error": str(e)}, 400)
-
-    _update_sign_count(cred_id_b64, verification.new_sign_count)
-
-    user_id = cred["user_id"]
-    # Pick active_hh: first membership (client can switch via /households/switch)
-    memberships = _list_memberships(user_id)
-    active_hh = memberships[0]["hh_id"] if memberships else None
-
-    token, _ = _create_session(user_id, active_hh=active_hh)
-    return _json(
-        {"ok": True, "user_id": user_id, "active_hh": active_hh},
-        cookies=[_session_cookie(token)],
-    )
-
-def auth_recover_start(event):
-    """SIWA-based recovery. Body: { siwa_id_token }. Returns registration options to add a new passkey to the existing user."""
-    data = _parse_body(event)
-    siwa_token = data.get("siwa_id_token") or ""
+    siwa_token = (data.get("siwa_id_token") or "").strip()
     if not siwa_token:
         return _json({"error": "siwa_id_token required"}, 400)
 
@@ -632,65 +415,92 @@ def auth_recover_start(event):
     except Exception as e:
         return _json({"error": f"SIWA verification failed: {e}"}, 400)
 
-    user_id = _user_id_for_apple_sub(claims["sub"])
-    if not user_id:
-        return _json({"error": "No account associated with this Apple ID"}, 404)
+    apple_sub = claims["sub"]
+    email_from_claim = claims.get("email") or ""
 
-    user = _get_user(user_id) or {}
-    options = webauthn.generate_registration_options(
-        rp_id=RP_ID,
-        rp_name=RP_NAME,
-        user_id=user_id.encode(),
-        user_name=user.get("name", "user"),
-        user_display_name=user.get("name", "user"),
-        authenticator_selection=AuthenticatorSelectionCriteria(
-            resident_key=ResidentKeyRequirement.PREFERRED,
-            user_verification=UserVerificationRequirement.PREFERRED,
-        ),
-    )
-    challenge_b64 = bytes_to_base64url(options.challenge)
-    cid = _put_challenge(challenge_b64, purpose="recover", extra={"user_id": user_id})
-
-    return _json({
-        "challenge_id": cid,
-        "options": json.loads(webauthn.options_to_json(options)),
-    })
-
-def auth_recover_finish(event):
-    """Body: { challenge_id, credential }. Attaches a new passkey to the existing user."""
-    data = _parse_body(event)
-    cid = data.get("challenge_id") or ""
-    credential = data.get("credential") or {}
-
-    ctx = _pop_challenge(cid, "recover")
-    if not ctx:
-        return _json({"error": "Challenge expired or invalid"}, 400)
-
-    try:
-        verification = webauthn.verify_registration_response(
-            credential=credential,
-            expected_challenge=base64url_to_bytes(ctx["challenge"]),
-            expected_rp_id=RP_ID,
-            expected_origin=RP_ORIGIN,
+    # ── Returning user ────────────────────────────────────────────────────
+    existing_uid = _user_id_for_apple_sub(apple_sub)
+    if existing_uid:
+        memberships = _list_memberships(existing_uid)
+        active_hh = memberships[0]["hh_id"] if memberships else None
+        token, _ = _create_session(existing_uid, active_hh=active_hh)
+        print(f"[siwa] returning=True user_id={existing_uid} active_hh={active_hh}")
+        return _json(
+            {"ok": True, "user_id": existing_uid, "active_hh": active_hh, "returning": True},
+            cookies=[_session_cookie(token)],
         )
-    except Exception as e:
-        return _json({"error": str(e)}, 400)
 
-    user_id = ctx["user_id"]
-    cred_id_b64 = bytes_to_base64url(verification.credential_id)
-    _put_credential(
-        cred_id_b64,
-        user_id=user_id,
-        public_key=verification.credential_public_key,
-        sign_count=verification.sign_count,
-        label="recovered",
-    )
+    # ── First-time signup ─────────────────────────────────────────────────
+    user_name = (data.get("user_name") or "").strip()
+    household_name = (data.get("household_name") or "").strip()
+    child_name = (data.get("child_name") or "").strip()
+    child_dob = (data.get("child_dob") or "").strip()
+    invite_token = (data.get("invite_token") or "").strip()
 
-    memberships = _list_memberships(user_id)
-    active_hh = memberships[0]["hh_id"] if memberships else None
-    token, _ = _create_session(user_id, active_hh=active_hh)
+    # Setup-required: nothing in the body indicates how to provision the user.
+    if not household_name and not invite_token:
+        return _json(
+            {
+                "error": "Setup required",
+                "returning": False,
+                "needs": ["user_name", "household_name_or_invite_token"],
+            },
+            412,
+        )
+
+    if household_name and invite_token:
+        return _json(
+            {"error": "household_name and invite_token are mutually exclusive"},
+            400,
+        )
+
+    # Resolve display name. SIWA's id_token does not normally carry the user's
+    # name (Apple delivers it out-of-band via fullName on the iOS credential).
+    # Try a `name` claim first as defense in depth, then fall back to body.
+    resolved_name = ""
+    name_claim = claims.get("name")
+    if isinstance(name_claim, dict):
+        first = (name_claim.get("firstName") or "").strip()
+        last = (name_claim.get("lastName") or "").strip()
+        resolved_name = " ".join(p for p in (first, last) if p)
+    elif isinstance(name_claim, str):
+        resolved_name = name_claim.strip()
+    if not resolved_name:
+        resolved_name = user_name
+    if not resolved_name:
+        return _json({"error": "user_name required on first signup"}, 400)
+
+    # Mint the user.
+    user_id = _new_id("u_")
+    _put_user(user_id, apple_sub=apple_sub, name=resolved_name, email=email_from_claim)
+
+    # Provision: invite or new household.
+    if invite_token:
+        invite = _get_invite(invite_token)
+        if not invite or invite.get("used_at") or invite.get("expires", 0) < _now():
+            # Roll back the just-created user so we don't leak orphans.
+            table.delete_item(Key={"PK": f"USER#{user_id}", "SK": "PROFILE"})
+            table.delete_item(Key={"PK": f"APPLESUB#{apple_sub}", "SK": "LOOKUP"})
+            return _json({"error": "Invite is invalid or expired"}, 404)
+        consumed = _consume_invite(invite_token)
+        if not consumed:
+            table.delete_item(Key={"PK": f"USER#{user_id}", "SK": "PROFILE"})
+            table.delete_item(Key={"PK": f"APPLESUB#{apple_sub}", "SK": "LOOKUP"})
+            return _json({"error": "Invite already used"}, 409)
+        hh_id = consumed["hh_id"]
+        _add_membership(hh_id, user_id, role="member", hh_name=consumed.get("hh_name", ""))
+    else:
+        hh_id = _create_household(
+            household_name,
+            owner_uid=user_id,
+            child_name=child_name,
+            child_dob=child_dob,
+        )
+
+    token, _ = _create_session(user_id, active_hh=hh_id)
+    print(f"[siwa] returning=False user_id={user_id} active_hh={hh_id}")
     return _json(
-        {"ok": True, "user_id": user_id, "active_hh": active_hh},
+        {"ok": True, "user_id": user_id, "active_hh": hh_id, "returning": False},
         cookies=[_session_cookie(token)],
     )
 
@@ -1089,6 +899,37 @@ def _put_hh_timer(hh_id: str, countdown_end: float, mixed_at_str: str, mixed_ml:
         "ntfy_sent": ntfy_sent,
     })
 
+def _restore_hh_timer_from_log(hh_id: str):
+    """Re-derive the household's TIMER row from the most recent FEED# entry.
+    Called after every manual add / edit / delete of a feeding so the dashboard's
+    countdown auto-tracks whichever entry is now most recent. If no feedings
+    remain, clears the timer."""
+    feedings = _query_hh_prefix(hh_id, "FEED#")
+    if not feedings:
+        _put_hh_timer(hh_id, 0.0, "", 0, False)
+        return
+    settings = _hh_settings(hh_id)
+    countdown_secs = settings["countdown_secs"]
+    parsed = []
+    for f in feedings:
+        try:
+            dt = datetime.strptime(f.get("date", ""), "%Y-%m-%d %I:%M %p").replace(tzinfo=timezone.utc)
+            parsed.append((f, dt))
+        except (ValueError, TypeError):
+            continue
+    if not parsed:
+        # No parseable dates — fall back to lex-last entry, anchor timer to "now".
+        latest = feedings[-1]
+        _put_hh_timer(hh_id, time.time() + countdown_secs,
+                      latest.get("date", "").split(" ", 1)[-1] if " " in latest.get("date", "") else "",
+                      int(latest.get("ml", 0)), False)
+        return
+    latest, latest_dt = max(parsed, key=lambda x: x[1])
+    mixed_at_str = latest_dt.strftime("%I:%M %p").lstrip("0")
+    mixed_ml = int(latest.get("ml", 0))
+    countdown_end = latest_dt.timestamp() + countdown_secs
+    _put_hh_timer(hh_id, countdown_end, mixed_at_str, mixed_ml, False)
+
 def _query_hh_prefix(hh_id: str, prefix: str) -> list[dict]:
     items = []
     kwargs = {
@@ -1237,6 +1078,10 @@ def post_feeding(event):
         "created_by_uid": session["user_id"],
         "created_by_name": _creator_name(session),
     })
+    # Re-anchor the household's timer to whichever feed is now the latest
+    # (this one if it post-dates the previous most-recent, otherwise the
+    # previous one — backfills don't disturb a fresher bottle's timer).
+    _restore_hh_timer_from_log(hh_id)
     return _json({"ok": True, "sk": sk})
 
 def put_feeding(event):
@@ -1276,6 +1121,9 @@ def put_feeding(event):
         table.update_item(**kwargs)
     except _dynamodb.meta.client.exceptions.ConditionalCheckFailedException:
         return _json({"error": "not found"}, 404)
+    # An edit can change ml or date on any entry, including the most recent —
+    # always re-derive the timer to keep the dashboard honest.
+    _restore_hh_timer_from_log(hh_id)
     return _json({"ok": True})
 
 def delete_feeding(event):
@@ -1288,6 +1136,9 @@ def delete_feeding(event):
         return mem_err
     sk = event.get("pathParameters", {}).get("sk", "")
     table.delete_item(Key={"PK": f"HH#{hh_id}", "SK": sk})
+    # Deleting the most recent feed should fall the timer back to the new
+    # latest (or clear it if the household has no feedings left).
+    _restore_hh_timer_from_log(hh_id)
     return _json({"ok": True})
 
 def _backfill_sk(date_str: str) -> str:
@@ -1467,12 +1318,7 @@ PUBLIC_ROUTES = [
     ("GET",    r"^/\.well-known/apple-app-site-association$", apple_app_site_association),
     ("GET",    r"^/apple-app-site-association$",              apple_app_site_association),
     ("GET",    r"^/api/auth/status$",             auth_status),
-    ("POST",   r"^/api/auth/register/start$",     auth_register_start),
-    ("POST",   r"^/api/auth/register/finish$",    auth_register_finish),
-    ("POST",   r"^/api/auth/login/options$",      auth_login_options),
-    ("POST",   r"^/api/auth/login/verify$",       auth_login_verify),
-    ("POST",   r"^/api/auth/recover/start$",      auth_recover_start),
-    ("POST",   r"^/api/auth/recover/finish$",     auth_recover_finish),
+    ("POST",   r"^/api/auth/siwa$",               auth_siwa),
     ("POST",   r"^/api/auth/logout$",             auth_logout),
     ("GET",    r"^/api/invites/(?P<token>[^/]+)$", invite_preview),
 ]

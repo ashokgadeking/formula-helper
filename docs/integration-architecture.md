@@ -33,7 +33,9 @@ The iOS app picks the pair via build configuration (`Debug` / `DevRelease` / `Re
 
 ## Handshake flows
 
-### Passkey sign-in (the happy path)
+> **STALE as of Story 2.1.** The passkey + register/login/recover handshake described below was replaced by a single SIWA-only `POST /api/auth/siwa` endpoint. See `architecture-lambda.md#Sign in / sign up (single SIWA flow)` for the current model. Story 2.2 will rewrite this section once the iOS side ships.
+
+### Passkey sign-in (legacy — superseded)
 
 ```
 iOS                            Lambda                         Apple authenticator

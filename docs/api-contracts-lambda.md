@@ -13,12 +13,7 @@ Base URLs:
 | GET | `/.well-known/apple-app-site-association` | `apple_app_site_association` | SIWA / universal links association JSON |
 | GET | `/apple-app-site-association` | `apple_app_site_association` | Legacy mirror of the above |
 | GET | `/api/auth/status` | `auth_status` | Returns `{authenticated, user_id?, user_name?, active_hh?}` for the current cookie |
-| POST | `/api/auth/register/start` | `auth_register_start` | Body: `{siwa_id_token, user_name, household_name?, child_name?, child_dob?, invite_token?}`. Returns `{challenge_id, options}`. |
-| POST | `/api/auth/register/finish` | `auth_register_finish` | Body: `{challenge_id, credential}`. Returns `{ok, user_id, active_hh}` + session cookie. |
-| POST | `/api/auth/login/options` | `auth_login_options` | Returns `{challenge_id, options}`. No body required. |
-| POST | `/api/auth/login/verify` | `auth_login_verify` | Body: `{challenge_id, credential}`. Verifies assertion, issues session. |
-| POST | `/api/auth/recover/start` | `auth_recover_start` | Body: `{siwa_id_token}`. Reattaches to existing account via `apple_sub`. |
-| POST | `/api/auth/recover/finish` | `auth_recover_finish` | Body: `{challenge_id, credential}`. Adds a new passkey to existing user. |
+| POST | `/api/auth/siwa` | `auth_siwa` | Body: `{siwa_id_token, user_name?, household_name?, child_name?, child_dob?, invite_token?}`. Two-step: returning user → 200 `{ok, user_id, active_hh, returning: true}` + Set-Cookie. First-time without setup → 412 `{error: "Setup required", returning: false, needs: [...]}`. First-time with `household_name` or `invite_token` → 200 + session cookie + `{returning: false}`. `household_name` and `invite_token` are mutually exclusive (400 if both). |
 | POST | `/api/auth/logout` | `auth_logout` | Clears session. |
 | POST | `/api/auth/dev-login` | `auth_dev_login` | Dev-stack-only bypass. Not wired in prod templates. |
 | GET | `/api/invites/{token}` | `invite_preview` | Returns `{hh_name, inviter_name, expires}`. Used by iOS before redeem. |

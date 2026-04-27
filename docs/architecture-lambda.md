@@ -11,7 +11,7 @@ Prod CloudFront sits in front of API Gateway for custom-domain serving and RP-ID
 ```
 lambda/
 ├── handler.py              # 1438 lines — entire backend
-└── requirements.txt        # webauthn>=2.0,<3.0  ; pyjwt[crypto]>=2.8,<3.0
+└── requirements.txt        # pyjwt[crypto]>=2.8,<3.0   (was webauthn + pyjwt; webauthn dropped in Story 2.1)
 ```
 
 Boto3 is implicit (provided by the Lambda runtime).
@@ -38,28 +38,30 @@ See `api-contracts-lambda.md` for the full route list.
 ### Identity primitives
 
 - **`USER#<uid>` / `PROFILE`** — canonical user record (`user_id`, `apple_sub`, `name`, `email`, `created_at`).
-- **`APPLESUB#<apple_sub>` / `LOOKUP`** — reverse index for SIWA recovery.
-- **`CRED#<cred_id_b64>` / `CRED`** — passkey credential (public key + sign count).
+- **`APPLESUB#<apple_sub>` / `LOOKUP`** — reverse index from the Apple-issued subject to the user_id; canonical lookup for both signin and signup.
 - **`SESS#<token>` / `META`** — session record with TTL (`SESSION_TTL_SECS = 30 days`). `active_hh` is mutable on the session.
-- **`CHAL#<challenge_id>` / `<purpose>`** — one-shot WebAuthn challenge with 5-min TTL, deleted on use.
 
-### Signup (new account)
+Pre-Story-2.1 the auth model also had `CRED#<cred_id_b64>` / `CRED` (passkey credentials) and `CHAL#<challenge_id>` / `<purpose>` (one-shot WebAuthn challenges). Both partitions are now dead — the table may still hold orphan `CRED#` rows from earlier signups but nothing reads them. Cleanup is deferred.
 
-1. Client does SIWA, passes `siwa_id_token` to `POST /api/auth/register/start`.
-2. Handler verifies SIWA via `_verify_siwa` (JWKS from `https://appleid.apple.com/auth/keys`, audience = `com.ashokteja.formulahelper`).
-3. Creates `USER#<uid>` + `APPLESUB#<sub>` (if not already present), creates the household (or joins via `invite_token`), issues a WebAuthn registration challenge, returns `{challenge_id, options}`.
-4. Client runs the platform authenticator registration, posts the attestation to `POST /api/auth/register/finish`.
-5. Handler verifies attestation with `py-webauthn`, stores the credential, issues a session cookie, returns `{ok, user_id, active_hh}`.
+### Sign in / sign up (single SIWA flow)
 
-### Login (returning user)
+There is exactly one auth endpoint: `POST /api/auth/siwa`. Two-step protocol from the client's perspective:
 
-1. `POST /api/auth/login/options` — resident-key discovery, no `allowCredentials`. Returns `{challenge_id, options}`.
-2. Client does platform assertion.
-3. `POST /api/auth/login/verify` — verifies, updates sign count, issues session.
+**Step 1 — bare token:** client posts `{siwa_id_token}`. Server verifies the token via `_verify_siwa` (JWKS from `https://appleid.apple.com/auth/keys`, audience `com.ashokteja.formulahelper`), reads `claims["sub"]`, and looks up `APPLESUB#<sub>`.
+
+- **Returning user (apple_sub maps to a user_id):** issues a session cookie, returns `200 {ok, user_id, active_hh, returning: true}`. `active_hh` is the user's first remaining membership (or `null` if they were kicked from everywhere).
+- **First-time (no apple_sub mapping yet):** returns `412 Precondition Required` with `{error: "Setup required", returning: false, needs: ["user_name", "household_name_or_invite_token"]}`. No cookie, no user created.
+
+**Step 2 — full setup:** client re-posts `{siwa_id_token, user_name, household_name OR invite_token, child_name?, child_dob?}` (same id_token reused — SIWA tokens are short-lived but valid for several minutes, plenty of time to fill a form). Server creates `USER#<uid>` + `APPLESUB#<sub>`, creates the household (or consumes the invite + adds membership), issues a session cookie, returns `200 {ok, user_id, active_hh, returning: false}`.
+
+Edge cases handled in `auth_siwa`:
+- Both `household_name` and `invite_token` set → `400`.
+- Invite-consume races with another redemption → `409` and rolls back the just-created user/applesub rows so no orphans linger.
+- Apple's id_token does not normally include the user's name (delivered out-of-band on the iOS side via `ASAuthorizationAppleIDCredential.fullName`). Server tries `claims.get("name")` as defense in depth, falls back to body's `user_name`. Empty resolved name on first signup → `400`.
 
 ### Recovery
 
-Same as signup but keyed on the existing `APPLESUB` → user id, registers a new passkey for the existing account. Does not create a new user.
+Identical to sign-in. The user re-authorizes with Apple, server matches `apple_sub` → existing `user_id`, session issued. No separate "recovery" code path.
 
 ### Capability model
 
