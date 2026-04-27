@@ -32,7 +32,7 @@ struct AuthView: View {
                     Text("Formula Helper")
                         .font(.outfit(28, weight: .bold))
                         .foregroundColor(Color.primaryLabel)
-                    Text("Sign in with your passkey")
+                    Text("Sign in with Apple")
                         .font(.outfit(11, weight: .medium))
                         .tracking(2.5)
                         .foregroundColor(Color.secondaryLabel)
@@ -49,26 +49,13 @@ struct AuthView: View {
                             .multilineTextAlignment(.center)
                     }
 
-                    primaryButton(label: "Sign In with Passkey", icon: "person.badge.key.fill") {
-                        await run { try await auth.signIn() }
-                    }
-
-                    secondaryButton(label: "Create Account") {
-                        Task { await startSignUp() }
+                    primaryButton(label: "Continue with Apple", icon: "applelogo") {
+                        await startSiwa()
                     }
 
                     secondaryButton(label: "Join with Invite") {
                         showJoinCodeEntry = true
                     }
-
-                    Button {
-                        Task { await run { try await auth.recover() } }
-                    } label: {
-                        Text("Can't sign in? Recover with Apple ID")
-                            .font(.outfit(12))
-                            .foregroundColor(Color.secondaryLabel)
-                    }
-                    .padding(.top, 4)
 
                     if isDevStack {
                         Button {
@@ -112,28 +99,74 @@ struct AuthView: View {
 
     // MARK: - Triggers
 
-    private func startSignUp() async {
+    /// Tap "Continue with Apple". Try a one-shot bare-token signin; if the server says
+    /// "setup required" (412) we present the paged form using the same idToken.
+    private func startSiwa() async {
         errorMessage = nil; isWorking = true
         defer { isWorking = false }
         do {
-            authLog.notice("starting SIWA for sign-up")
+            authLog.notice("starting SIWA")
             let draft = try await auth.beginSignUp()
             authLog.notice("SIWA returned, firstName=\(draft.suggestedFirstName ?? "<nil>", privacy: .private)")
-            signUpDraft = draft
-            authLog.notice("signUpDraft set, presenting cover")
+            let result = try await auth.siwaAuth(
+                idToken: draft.siwaToken,
+                userName: draft.suggestedFirstName,
+                householdName: nil,
+                childName: nil,
+                childDob: nil,
+                inviteToken: nil
+            )
+            switch result {
+            case .signedIn:
+                authLog.notice("siwa signin complete")
+                // AuthState transition pulls the dashboard up automatically.
+            case .setupRequired:
+                authLog.notice("setup required — presenting signup flow")
+                signUpDraft = draft
+            }
         } catch {
-            authLog.error("sign-up error: \(String(describing: error), privacy: .public)")
+            authLog.error("siwa error: \(String(describing: error), privacy: .public)")
             errorMessage = error.localizedDescription
         }
     }
 
+    /// Tap "Join with Invite" → invite token sheet → SIWA → `siwaAuth` carrying the invite_token.
+    /// Branches per AC 5: existing user → call `redeemInvite` + `switchHousehold` after signin
+    /// (backend ignores `invite_token` for returning users, so iOS does the join + switch on the
+    /// existing household-management endpoints).
     private func startJoin() async {
         errorMessage = nil; isWorking = true
         defer { isWorking = false }
         do {
             authLog.notice("starting SIWA for join")
             let draft = try await auth.beginSignUp()
-            joinDraft = draft
+            let result = try await auth.siwaAuth(
+                idToken: draft.siwaToken,
+                userName: draft.suggestedFirstName,
+                householdName: nil,
+                childName: nil,
+                childDob: nil,
+                inviteToken: pendingInviteToken
+            )
+            switch result {
+            case .signedIn(let returning):
+                if returning {
+                    // Backend signs in the existing user but doesn't merge the invite. iOS
+                    // calls the post-signin redeem path so the user actually joins + switches.
+                    do {
+                        let redeem = try await APIClient.shared.redeemInvite(token: pendingInviteToken)
+                        if let hhId = redeem.hh_id {
+                            _ = try? await APIClient.shared.switchHousehold(hhId: hhId)
+                        }
+                        await auth.checkStatus()
+                    } catch {
+                        errorMessage = "Signed in, but couldn't join the household — try Settings → Redeem invite code."
+                    }
+                }
+                pendingInviteToken = ""
+            case .setupRequired:
+                joinDraft = draft
+            }
         } catch {
             authLog.error("join error: \(String(describing: error), privacy: .public)")
             errorMessage = error.localizedDescription
@@ -448,9 +481,9 @@ struct SignUpFlowView: View {
                     if isWorking {
                         ProgressView().tint(Color.green).scaleEffect(0.85)
                     } else if isLastStep {
-                        Image(systemName: "faceid").font(.system(size: 15))
+                        Image(systemName: "checkmark.circle.fill").font(.system(size: 15))
                     }
-                    Text(isLastStep ? "Create Passkey & Finish" : "Continue")
+                    Text(isLastStep ? "Finish setup" : "Continue")
                         .font(.outfit(15, weight: .semibold))
                 }
                 .foregroundColor(Color.green)
@@ -492,17 +525,24 @@ struct SignUpFlowView: View {
         isWorking = true
         defer { isWorking = false }
         do {
-            let dobStr = childName.trimmingCharacters(in: .whitespaces).isEmpty
-                ? nil
-                : isoDate(childDob)
-            try await auth.completeSignUp(
-                draft: draft,
+            let trimmedChild = childName.trimmingCharacters(in: .whitespaces)
+            let dobStr = trimmedChild.isEmpty ? nil : isoDate(childDob)
+            let result = try await auth.siwaAuth(
+                idToken: draft.siwaToken,
                 userName: userName.trimmingCharacters(in: .whitespaces),
                 householdName: isInvite ? nil : householdName.trimmingCharacters(in: .whitespaces),
-                childName: childName.trimmingCharacters(in: .whitespaces).isEmpty ? nil : childName.trimmingCharacters(in: .whitespaces),
+                childName: trimmedChild.isEmpty ? nil : trimmedChild,
                 childDob: dobStr,
                 inviteToken: inviteToken
             )
+            switch result {
+            case .signedIn:
+                break  // AuthState transition pulls the dashboard up.
+            case .setupRequired:
+                // Server still wants more details — shouldn't happen post-form, but if it
+                // does, surface a clear error rather than silently dismissing.
+                throw AuthError.missingSiwaToken
+            }
             dismiss()
             onFinish()
         } catch AuthError.cancelled {

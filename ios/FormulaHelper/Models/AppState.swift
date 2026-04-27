@@ -80,10 +80,13 @@ struct AuthOkResponse: Codable {
     let active_hh: String?
 }
 
-/// Raw shape returned by register/start, login/options, recover/start
-struct ChallengeEnvelope: Codable {
-    let challenge_id: String
-    // `options` is decoded separately as raw JSON for passing to ASAuthorization
+/// Response from `POST /api/auth/siwa` on 200 (returning user OR first-time with full setup body).
+/// 412 first-time-no-setup is surfaced via `APIError.setupRequired(needs:)` and never reaches this struct.
+struct SiwaAuthResponse: Codable {
+    let ok: Bool
+    let user_id: String?
+    let active_hh: String?
+    let returning: Bool
 }
 
 struct Household: Codable, Identifiable {

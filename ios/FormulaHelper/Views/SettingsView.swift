@@ -49,25 +49,8 @@ struct SettingsView: View {
     @ViewBuilder
     private var householdSection: some View {
         Section {
-            if let active = activeHousehold {
-                NavigationLink {
-                    HouseholdDetailView(
-                        household: active,
-                        initialMembers: prefetchedMembers[active.hh_id] ?? [],
-                        vm: vm
-                    ) {
-                        Task { await loadHouseholds() }
-                    }
-                    .environmentObject(auth)
-                } label: {
-                    SettingsRow(
-                        icon: "house.fill",
-                        tint: .orange,
-                        title: active.name.isEmpty ? "Household" : active.name,
-                        trailing: active.role.capitalized
-                    )
-                }
-                .listRowBackground(Color.elevatedBackground)
+            ForEach(households) { hh in
+                householdRow(hh)
             }
 
             Button {
@@ -90,6 +73,64 @@ struct SettingsView: View {
             } else if let redeemMessage {
                 Text(redeemMessage).foregroundColor(Color.secondaryLabel)
             }
+        }
+    }
+
+    @ViewBuilder
+    private func householdRow(_ hh: Household) -> some View {
+        let isActive = hh.hh_id == (activeHhId ?? activeHousehold?.hh_id)
+        if isActive {
+            NavigationLink {
+                HouseholdDetailView(
+                    household: hh,
+                    initialMembers: prefetchedMembers[hh.hh_id] ?? [],
+                    vm: vm
+                ) {
+                    Task { await loadHouseholds() }
+                }
+                .environmentObject(auth)
+            } label: {
+                householdRowLabel(hh, showActiveCheck: true)
+            }
+            .listRowBackground(Color.elevatedBackground)
+        } else {
+            Button {
+                Task { await switchTo(hh) }
+            } label: {
+                householdRowLabel(hh, showActiveCheck: false)
+            }
+            .buttonStyle(.plain)
+            .listRowBackground(Color.elevatedBackground)
+        }
+    }
+
+    @ViewBuilder
+    private func householdRowLabel(_ hh: Household, showActiveCheck: Bool) -> some View {
+        HStack(spacing: 0) {
+            SettingsRow(
+                icon: "house.fill",
+                tint: .orange,
+                title: hh.name.isEmpty ? "Household" : hh.name,
+                trailing: hh.role.capitalized
+            )
+            if showActiveCheck {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.green)
+                    .padding(.leading, 8)
+            }
+        }
+    }
+
+    private func switchTo(_ hh: Household) async {
+        redeemError = nil
+        redeemMessage = nil
+        do {
+            _ = try await APIClient.shared.switchHousehold(hhId: hh.hh_id)
+            await loadHouseholds()
+            await vm.refresh()
+        } catch {
+            redeemError = error.localizedDescription
         }
     }
 

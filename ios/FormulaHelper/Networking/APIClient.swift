@@ -5,11 +5,14 @@ import Foundation
 enum APIError: LocalizedError {
     case badStatus(Int, String)
     case decodingFailed(String)
+    /// 412 from `POST /api/auth/siwa` — caller must collect setup details and retry.
+    case setupRequired(needs: [String])
 
     var errorDescription: String? {
         switch self {
         case .badStatus(let code, let msg): return "Server error \(code): \(msg)"
         case .decodingFailed(let msg): return "Decode error: \(msg)"
+        case .setupRequired:                return "Setup required to finish signing up."
         }
     }
 }
@@ -50,29 +53,24 @@ actor APIClient {
         try await get("/api/auth/status")
     }
 
-    /// Returns raw JSON data — caller extracts `challenge_id` and the `options` sub-object for ASAuthorization
-    func registerStart(body: [String: Any]) async throws -> Data {
-        try await postRaw("/api/auth/register/start", body: body)
-    }
-
-    func registerFinish(body: [String: Any]) async throws -> AuthOkResponse {
-        try await post("/api/auth/register/finish", body: body)
-    }
-
-    func loginOptions() async throws -> Data {
-        try await postRaw("/api/auth/login/options", body: [:])
-    }
-
-    func loginVerify(body: [String: Any]) async throws -> AuthOkResponse {
-        try await post("/api/auth/login/verify", body: body)
-    }
-
-    func recoverStart(siwaIdToken: String) async throws -> Data {
-        try await postRaw("/api/auth/recover/start", body: ["siwa_id_token": siwaIdToken])
-    }
-
-    func recoverFinish(body: [String: Any]) async throws -> AuthOkResponse {
-        try await post("/api/auth/recover/finish", body: body)
+    /// Single SIWA endpoint. On 412 throws `APIError.setupRequired(needs:)`; the caller should
+    /// present setup UI and re-call with the same `idToken` plus `userName` and either
+    /// `householdName` or `inviteToken`.
+    func siwaAuth(
+        idToken: String,
+        userName: String?,
+        householdName: String?,
+        childName: String?,
+        childDob: String?,
+        inviteToken: String?
+    ) async throws -> SiwaAuthResponse {
+        var body: [String: Any] = ["siwa_id_token": idToken]
+        if let v = userName,      !v.isEmpty { body["user_name"]      = v }
+        if let v = householdName, !v.isEmpty { body["household_name"] = v }
+        if let v = childName,     !v.isEmpty { body["child_name"]     = v }
+        if let v = childDob,      !v.isEmpty { body["child_dob"]      = v }
+        if let v = inviteToken,   !v.isEmpty { body["invite_token"]   = v }
+        return try await post("/api/auth/siwa", body: body)
     }
 
     func logout() async throws {
@@ -274,6 +272,13 @@ actor APIClient {
     private func checkStatus(_ response: URLResponse, _ data: Data) throws {
         guard let http = response as? HTTPURLResponse else { return }
         guard (200..<300).contains(http.statusCode) else {
+            // 412 from /auth/siwa is expected first-time-no-setup signaling — surface
+            // it as a typed error so callers can pattern-match without parsing strings.
+            if http.statusCode == 412 {
+                let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                let needs = (parsed?["needs"] as? [String]) ?? []
+                throw APIError.setupRequired(needs: needs)
+            }
             let msg = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String
                 ?? String(data: data, encoding: .utf8) ?? "Unknown error"
             throw APIError.badStatus(http.statusCode, msg)

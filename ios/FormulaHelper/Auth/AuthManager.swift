@@ -12,6 +12,13 @@ struct SignUpDraft: Identifiable {
     var id: String { siwaToken }
 }
 
+// MARK: - Auth result
+
+enum SiwaAuthResult {
+    case signedIn(returning: Bool)
+    case setupRequired
+}
+
 // MARK: - State
 
 enum AuthState: Equatable {
@@ -43,19 +50,13 @@ enum AuthState: Equatable {
 // MARK: - Errors
 
 enum AuthError: LocalizedError {
-    case invalidCredential
-    case missingChallenge
     case cancelled
     case missingSiwaToken
-    case missingDetails(String)
 
     var errorDescription: String? {
         switch self {
-        case .invalidCredential: return "Unexpected credential type from authenticator"
-        case .missingChallenge:  return "Challenge missing from server response"
-        case .cancelled:         return "Sign-in was cancelled"
-        case .missingSiwaToken:  return "Apple didn't return an identity token"
-        case .missingDetails(let m): return m
+        case .cancelled:        return "Sign-in was cancelled"
+        case .missingSiwaToken: return "Apple didn't return an identity token"
         }
     }
 }
@@ -90,174 +91,48 @@ final class AuthManager: NSObject, ObservableObject {
         }
     }
 
-    /// Passkey login. Server picks the credential via resident-key discovery.
-    func signIn() async throws {
-        let raw = try await APIClient.shared.loginOptions()
-        let (challengeId, options) = try parseEnvelope(raw)
-
-        let credential = try await performAssertion(options: options)
-        let body: [String: Any] = [
-            "challenge_id": challengeId,
-            "credential": webauthnAssertionJSON(credential),
-        ]
-        _ = try await APIClient.shared.loginVerify(body: body)
-        await syncAfterAuth()
-    }
-
-    /// First step of signup: show Apple sheet, return a draft the UI uses to pre-fill the paged flow.
+    /// Trigger Sign in with Apple and capture the id_token + any name/email Apple returns.
+    /// Returns a draft the UI uses to (a) hand the token to `siwaAuth`, and (b) pre-fill the
+    /// paged setup form when the server responds 412 / "setup required".
     func beginSignUp() async throws -> SignUpDraft {
         let (token, name, email) = try await requestSiwaCredential()
         return SignUpDraft(siwaToken: token, suggestedFirstName: name, email: email)
     }
 
-    /// Second step: finish signup — calls register/start then register/finish (passkey).
-    /// Pass `householdName` + child info for a new household, or `inviteToken` to join one.
-    func completeSignUp(
-        draft: SignUpDraft,
-        userName: String,
+    /// Single auth call. Pair with `beginSignUp()` to obtain the `idToken`.
+    /// Returns:
+    /// - `.signedIn(returning: true)` — existing account, session cookie set, AuthState updated.
+    /// - `.signedIn(returning: false)` — new account just created, session cookie set.
+    /// - `.setupRequired` — server needs `user_name` + `household_name`-or-`invite_token`. Caller
+    ///   should present the paged setup form and call `siwaAuth` again with the same `idToken`.
+    func siwaAuth(
+        idToken: String,
+        userName: String?,
         householdName: String?,
         childName: String?,
         childDob: String?,
         inviteToken: String?
-    ) async throws {
-        var body: [String: Any] = [
-            "siwa_id_token": draft.siwaToken,
-            "user_name": userName,
-        ]
-        if let h = householdName, !h.isEmpty { body["household_name"] = h }
-        if let c = childName, !c.isEmpty { body["child_name"] = c }
-        if let d = childDob, !d.isEmpty { body["child_dob"] = d }
-        if let t = inviteToken, !t.isEmpty { body["invite_token"] = t }
-
-        let raw = try await APIClient.shared.registerStart(body: body)
-        let (challengeId, options) = try parseEnvelope(raw)
-
-        let credential = try await performRegistration(options: options, userName: userName)
-        let finishBody: [String: Any] = [
-            "challenge_id": challengeId,
-            "credential": try webauthnAttestationJSON(credential),
-        ]
-        _ = try await APIClient.shared.registerFinish(body: finishBody)
-        await syncAfterAuth()
-    }
-
-    /// SIWA-based recovery: issues a new passkey for the existing account.
-    func recover() async throws {
-        let (siwaToken, _, _) = try await requestSiwaCredential()
-        let raw = try await APIClient.shared.recoverStart(siwaIdToken: siwaToken)
-        let (challengeId, options) = try parseEnvelope(raw)
-
-        let userName = (options["user"] as? [String: Any])?["name"] as? String ?? "account"
-        let credential = try await performRegistration(options: options, userName: userName)
-        let body: [String: Any] = [
-            "challenge_id": challengeId,
-            "credential": try webauthnAttestationJSON(credential),
-        ]
-        _ = try await APIClient.shared.recoverFinish(body: body)
-        await syncAfterAuth()
+    ) async throws -> SiwaAuthResult {
+        do {
+            let resp = try await APIClient.shared.siwaAuth(
+                idToken: idToken,
+                userName: userName,
+                householdName: householdName,
+                childName: childName,
+                childDob: childDob,
+                inviteToken: inviteToken
+            )
+            await checkStatus()
+            return .signedIn(returning: resp.returning)
+        } catch APIError.setupRequired {
+            return .setupRequired
+        }
     }
 
     func logout() async {
         try? await APIClient.shared.logout()
         authState = .unauthenticated
     }
-
-    // MARK: - Private: envelope parsing
-
-    private func parseEnvelope(_ data: Data) throws -> (String, [String: Any]) {
-        guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let cid = obj["challenge_id"] as? String,
-              let options = obj["options"] as? [String: Any]
-        else { throw AuthError.missingChallenge }
-        return (cid, options)
-    }
-
-    private func syncAfterAuth() async {
-        // Pull fresh status so we have user_name populated
-        await checkStatus()
-    }
-
-    // MARK: - Private: WebAuthn (passkey)
-
-    private func performAssertion(options: [String: Any]) async throws -> ASAuthorizationPlatformPublicKeyCredentialAssertion {
-        guard let challengeStr = options["challenge"] as? String,
-              let challenge = Data(base64URLEncoded: challengeStr)
-        else { throw AuthError.missingChallenge }
-
-        let rpId = (options["rpId"] as? String) ?? APIClient.rpId
-
-        let provider = ASAuthorizationPlatformPublicKeyCredentialProvider(
-            relyingPartyIdentifier: rpId
-        )
-        let request = provider.createCredentialAssertionRequest(challenge: challenge)
-
-        let authorization = try await perform(request: request)
-        guard let credential = authorization.credential
-                as? ASAuthorizationPlatformPublicKeyCredentialAssertion
-        else { throw AuthError.invalidCredential }
-        return credential
-    }
-
-    private func performRegistration(
-        options: [String: Any],
-        userName: String
-    ) async throws -> ASAuthorizationPlatformPublicKeyCredentialRegistration {
-        guard let challengeStr = options["challenge"] as? String,
-              let challenge = Data(base64URLEncoded: challengeStr)
-        else { throw AuthError.missingChallenge }
-
-        let rp = options["rp"] as? [String: Any] ?? [:]
-        let rpId = (rp["id"] as? String) ?? APIClient.rpId
-
-        let user = options["user"] as? [String: Any] ?? [:]
-        let userIdStr = user["id"] as? String ?? ""
-        let userId = Data(base64URLEncoded: userIdStr) ?? Data(userName.utf8)
-
-        let provider = ASAuthorizationPlatformPublicKeyCredentialProvider(
-            relyingPartyIdentifier: rpId
-        )
-        let request = provider.createCredentialRegistrationRequest(
-            challenge: challenge,
-            name: userName,
-            userID: userId
-        )
-
-        let authorization = try await perform(request: request)
-        guard let credential = authorization.credential
-                as? ASAuthorizationPlatformPublicKeyCredentialRegistration
-        else { throw AuthError.invalidCredential }
-        return credential
-    }
-
-    private func webauthnAssertionJSON(_ c: ASAuthorizationPlatformPublicKeyCredentialAssertion) -> [String: Any] {
-        [
-            "id":    c.credentialID.base64URLEncoded,
-            "rawId": c.credentialID.base64URLEncoded,
-            "type":  "public-key",
-            "response": [
-                "clientDataJSON":    c.rawClientDataJSON.base64URLEncoded,
-                "authenticatorData": c.rawAuthenticatorData.base64URLEncoded,
-                "signature":         c.signature.base64URLEncoded,
-                "userHandle":        c.userID.base64URLEncoded,
-            ],
-        ]
-    }
-
-    private func webauthnAttestationJSON(_ c: ASAuthorizationPlatformPublicKeyCredentialRegistration) throws -> [String: Any] {
-        guard let attestation = c.rawAttestationObject else {
-            throw AuthError.invalidCredential
-        }
-        return [
-            "id":    c.credentialID.base64URLEncoded,
-            "rawId": c.credentialID.base64URLEncoded,
-            "type":  "public-key",
-            "response": [
-                "clientDataJSON":    c.rawClientDataJSON.base64URLEncoded,
-                "attestationObject": attestation.base64URLEncoded,
-            ],
-        ]
-    }
-
 
     // MARK: - Private: Sign in with Apple
 
@@ -276,7 +151,7 @@ final class AuthManager: NSObject, ObservableObject {
         return (token, firstName, cred.email)
     }
 
-    // MARK: - Private: common controller wrapper
+    // MARK: - Private: ASAuthorization controller wrapper
 
     private func perform(request: ASAuthorizationRequest) async throws -> ASAuthorization {
         try await withCheckedThrowingContinuation { cont in
@@ -324,25 +199,5 @@ extension AuthManager: ASAuthorizationControllerPresentationContextProviding {
             .compactMap { $0 as? UIWindowScene }
             .flatMap { $0.windows }
             .first { $0.isKeyWindow } ?? UIWindow()
-    }
-}
-
-// MARK: - Data + base64url
-
-extension Data {
-    init?(base64URLEncoded string: String) {
-        var s = string
-            .replacingOccurrences(of: "-", with: "+")
-            .replacingOccurrences(of: "_", with: "/")
-        let pad = s.count % 4
-        if pad != 0 { s += String(repeating: "=", count: 4 - pad) }
-        self.init(base64Encoded: s)
-    }
-
-    var base64URLEncoded: String {
-        base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
     }
 }
