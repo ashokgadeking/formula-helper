@@ -96,6 +96,11 @@ final class StateViewModel: ObservableObject {
         }
         do {
             let _ = try await APIClient.shared.startFeeding(ml: ml)
+            // Belt-and-suspenders for the DDB eventually-consistent read race:
+            // server now does ConsistentRead, but the brief sleep also covers any
+            // network/CloudFront edge-cache scenarios where /api/state could land
+            // on a node that hasn't seen the just-written TIMER row yet.
+            try? await Task.sleep(for: .milliseconds(500))
             await refresh()
         } catch {
             errorMessage = error.localizedDescription

@@ -14,6 +14,29 @@ struct LogsView: View {
 
     enum LogTab { case formula, diaper, nap }
 
+    /// Single shared parser for the "yyyy-MM-dd hh:mm a" date strings the server
+    /// emits. Used to sort entries by chronological occurrence, not by their
+    /// creation/SK order — which diverges for backfilled entries since the
+    /// server SK is built from the moment of insert, not the entry's `date`.
+    private static let entryDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd hh:mm a"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
+
+    /// Newest-first by parsed `date`. Falls back to SK string comparison only
+    /// when both sides fail to parse (corrupt data).
+    private static func chronoDesc<E>(_ a: E, _ b: E, dateOf: (E) -> String, skOf: (E) -> String) -> Bool {
+        let f = entryDateFormatter
+        switch (f.date(from: dateOf(a)), f.date(from: dateOf(b))) {
+        case let (l?, r?): return l > r
+        case (.some, .none): return true
+        case (.none, .some): return false
+        case (.none, .none): return skOf(a) > skOf(b)
+        }
+    }
+
     // All unique dates that have formula entries, sorted ascending
     private var formulaDates: [String] {
         let raw = vm.state?.mix_log.compactMap { dayPrefix($0.date) } ?? []
@@ -39,23 +62,23 @@ struct LogsView: View {
         }
     }
 
-    // Entries for the selected date
+    // Entries for the selected date — newest by occurrence first.
     private var formulaEntries: [LogEntry] {
         (vm.state?.mix_log ?? [])
             .filter { ($0.date).hasPrefix(selectedDate) }
-            .reversed()
+            .sorted { Self.chronoDesc($0, $1, dateOf: { $0.date }, skOf: { $0.sk }) }
     }
 
     private var diaperEntries: [DiaperEntry] {
         (vm.state?.diaper_log ?? [])
             .filter { ($0.date).hasPrefix(selectedDate) }
-            .reversed()
+            .sorted { Self.chronoDesc($0, $1, dateOf: { $0.date }, skOf: { $0.sk }) }
     }
 
     private var napEntries: [NapEntry] {
         (vm.state?.nap_log ?? [])
             .filter { ($0.date).hasPrefix(selectedDate) }
-            .reversed()
+            .sorted { Self.chronoDesc($0, $1, dateOf: { $0.date }, skOf: { $0.sk }) }
     }
 
     // Navigation

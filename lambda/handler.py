@@ -91,7 +91,12 @@ def _decimal_to_native(obj):
 
 
 def _get_timer_state():
-    resp = table.get_item(Key={"PK": "STATE", "SK": "TIMER"})
+    # Strongly-consistent read: the dashboard's optimistic update on iOS
+    # immediately follows /api/start with /api/state, and an eventually-
+    # consistent read can briefly return the previous (expired) TIMER row,
+    # making the active timer flash back to the expired card. RCU cost
+    # roughly 2x for this single small item — negligible.
+    resp = table.get_item(Key={"PK": "STATE", "SK": "TIMER"}, ConsistentRead=True)
     item = resp.get("Item", {})
     return {
         "countdown_end": float(item.get("countdown_end", 0)),
