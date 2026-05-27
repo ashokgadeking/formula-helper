@@ -11,6 +11,7 @@
 		16644299F6F7443C8DA73B93 /* DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F233BF622763B28F4D9F06F /* DesignSystem.swift */; };
 		1AE309933D26459BE2DCB2C6 /* TrendsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AEE53434508F0BF501AD92CD /* TrendsView.swift */; };
 		32793DC0B0FC112575AF3A20 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F917BF7C45D10DCAA817C0C /* ContentView.swift */; };
+		68513A34603B030B1EB8FCC3 /* CacheManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2363D7073E8B031E8C31C189 /* CacheManager.swift */; };
 		76D9131BEEE2102A74FB8378 /* Outfit-Variable.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 9005B77617B063E3AFAEF723 /* Outfit-Variable.ttf */; };
 		7FAE34D8C74923641DE95D29 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16D740D538E64898893C6969 /* SettingsView.swift */; };
 		832170DC952B2F9E6177832B /* AuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16E2C4733A3BDD5F6C82C9D3 /* AuthManager.swift */; };
@@ -18,9 +19,8 @@
 		88D3CE185300E009C65594AE /* CacheManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2363D7073E8B031E8C31C189 /* CacheManager.swift */; };
 		9A0AF75AD8DA8D006058C376 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC7BA17B83F1BF39E610886B /* APIClient.swift */; };
 		9A13415480C3C6B46FF29CA1 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59B86C6F62095D372CC7DE00 /* AppState.swift */; };
-		AC57E97E93765C0A39F152A1 /* FormulaActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88965DA805769069B089595B /* FormulaActivityAttributes.swift */; };
-		AD62D0714C145EDB067B149F /* FormulaActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88965DA805769069B089595B /* FormulaActivityAttributes.swift */; };
 		BD8FD64F9F66BB5A2681420E /* FormulaHelperWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 448C4C8C1004E4B158DBD226 /* FormulaHelperWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		C98879DCF80D171C1F9EC171 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59B86C6F62095D372CC7DE00 /* AppState.swift */; };
 		CEBCF532B5BB82B73E0F4A09 /* FormulaHelperWidgets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06FD3459A1C69170F7BB04CD /* FormulaHelperWidgets.swift */; };
 		E1708611DA774A4682C8192E /* FormulaHelperApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DB7DEBE84588B0B0849C821 /* FormulaHelperApp.swift */; };
 		EE56ED8B2D6CC26BB1A86759 /* NotificationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8602640337F088BA7116087D /* NotificationManager.swift */; };
@@ -68,13 +68,13 @@
 		7FC10E41A03C0F1761B99FDA /* AuthView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthView.swift; sourceTree = "<group>"; };
 		8602640337F088BA7116087D /* NotificationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationManager.swift; sourceTree = "<group>"; };
 		8677FBFD9841ABCADDA8D499 /* Charts.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Charts.framework; path = System/Library/Frameworks/Charts.framework; sourceTree = SDKROOT; };
-		88965DA805769069B089595B /* FormulaActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FormulaActivityAttributes.swift; sourceTree = "<group>"; };
 		8F917BF7C45D10DCAA817C0C /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		9005B77617B063E3AFAEF723 /* Outfit-Variable.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Outfit-Variable.ttf"; sourceTree = "<group>"; };
 		9F233BF622763B28F4D9F06F /* DesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignSystem.swift; sourceTree = "<group>"; };
 		AEE53434508F0BF501AD92CD /* TrendsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrendsView.swift; sourceTree = "<group>"; };
 		DC7BA17B83F1BF39E610886B /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		F176CA9E0656EDAEFB3EA9ED /* LogsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogsView.swift; sourceTree = "<group>"; };
+		F98B2806D638518BC4FCF037 /* FormulaHelperWidgets.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FormulaHelperWidgets.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -100,6 +100,7 @@
 		25B37AF7D982C2ACCACA671E /* FormulaHelperWidgets */ = {
 			isa = PBXGroup;
 			children = (
+				F98B2806D638518BC4FCF037 /* FormulaHelperWidgets.entitlements */,
 				06FD3459A1C69170F7BB04CD /* FormulaHelperWidgets.swift */,
 				5F3211C08FABC08CE2EB1CE0 /* Info.plist */,
 			);
@@ -147,14 +148,6 @@
 			path = Resources;
 			sourceTree = "<group>";
 		};
-		7DEFD7A43388ADC02E47A905 /* LiveActivity */ = {
-			isa = PBXGroup;
-			children = (
-				88965DA805769069B089595B /* FormulaActivityAttributes.swift */,
-			);
-			path = LiveActivity;
-			sourceTree = "<group>";
-		};
 		801E82FE28B7969D92E8503C /* FormulaHelper */ = {
 			isa = PBXGroup;
 			children = (
@@ -164,7 +157,6 @@
 				5433D692DBC2A2D9B382A24E /* Info.plist */,
 				70412E56498881B10EE739FF /* Auth */,
 				658336434002C30E7596FF17 /* Cache */,
-				7DEFD7A43388ADC02E47A905 /* LiveActivity */,
 				981F0145FE804319D8FFC6C7 /* Models */,
 				9F47C14FFD12C6C2F8EEE37C /* Networking */,
 				4DDE1095412EF662EEA36B52 /* Notifications */,
@@ -323,7 +315,6 @@
 				88D3CE185300E009C65594AE /* CacheManager.swift in Sources */,
 				32793DC0B0FC112575AF3A20 /* ContentView.swift in Sources */,
 				16644299F6F7443C8DA73B93 /* DesignSystem.swift in Sources */,
-				AC57E97E93765C0A39F152A1 /* FormulaActivityAttributes.swift in Sources */,
 				E1708611DA774A4682C8192E /* FormulaHelperApp.swift in Sources */,
 				F28B25F73CF3D7854AAC6806 /* LogsView.swift in Sources */,
 				EE56ED8B2D6CC26BB1A86759 /* NotificationManager.swift in Sources */,
@@ -336,7 +327,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				AD62D0714C145EDB067B149F /* FormulaActivityAttributes.swift in Sources */,
+				C98879DCF80D171C1F9EC171 /* AppState.swift in Sources */,
+				68513A34603B030B1EB8FCC3 /* CacheManager.swift in Sources */,
 				CEBCF532B5BB82B73E0F4A09 /* FormulaHelperWidgets.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -397,6 +389,7 @@
 		75FF6CBF9536B488289E106F /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = FormulaHelperWidgets/FormulaHelperWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = TV6FL9FHCE;
 				INFOPLIST_FILE = FormulaHelperWidgets/Info.plist;
@@ -415,6 +408,7 @@
 		87523174E4079FDC184DDD62 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = FormulaHelperWidgets/FormulaHelperWidgets.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Distribution: ASHOK TEJA GADEPALLI (TV6FL9FHCE)";
 				CODE_SIGN_STYLE = Manual;
 				DEVELOPMENT_TEAM = TV6FL9FHCE;
@@ -467,7 +461,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 34;
+				CURRENT_PROJECT_VERSION = 47;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
@@ -532,7 +526,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 34;
+				CURRENT_PROJECT_VERSION = 47;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;

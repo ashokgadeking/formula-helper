@@ -10,7 +10,7 @@ settings:
   base:
     SWIFT_VERSION: "6.0"
     MARKETING_VERSION: "1.0.0"
-    CURRENT_PROJECT_VERSION: "34"
+    CURRENT_PROJECT_VERSION: "47"
 
 targets:
   FormulaHelper:
@@ -35,7 +35,6 @@ targets:
           - UIInterfaceOrientationLandscapeRight
         CFBundleDisplayName: Formula Helper
         ITSAppUsesNonExemptEncryption: false
-        NSSupportsLiveActivities: true
         UIAppFonts:
           - Outfit-Variable.ttf
     settings:
@@ -71,11 +70,14 @@ targets:
     deploymentTarget: "18.0"
     sources:
       - path: FormulaHelperWidgets
-      - path: FormulaHelper/LiveActivity/FormulaActivityAttributes.swift
+      - path: FormulaHelper/Cache/CacheManager.swift
+      - path: FormulaHelper/Models/AppState.swift
     info:
       path: FormulaHelperWidgets/Info.plist
       properties:
-        CFBundleDisplayName: FormulaHelperWidgets
+        CFBundleDisplayName: AvantiLog Widgets
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:
@@ -90,3 +92,8 @@ targets:
           CODE_SIGN_IDENTITY: "Apple Distribution: ASHOK TEJA GADEPALLI (TV6FL9FHCE)"
           PROVISIONING_PROFILE_SPECIFIER: FormulaHelperWidgetsAppStore
           PROVISIONING_PROFILE: "efbe7ee5-50ea-4876-98f9-98a0300c043e"
+    entitlements:
+      path: FormulaHelperWidgets/FormulaHelperWidgets.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.ashokteja.formulahelper

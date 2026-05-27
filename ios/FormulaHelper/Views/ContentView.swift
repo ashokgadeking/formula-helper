@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import WidgetKit
 
 enum Haptics {
     static func tap(_ style: UIImpactFeedbackGenerator.FeedbackStyle = .medium) {
@@ -64,6 +65,7 @@ final class StateViewModel: ObservableObject {
         do {
             let fresh = try await APIClient.shared.getState()
             state = fresh; CacheManager.shared.save(fresh); computeRates(); errorMessage = nil
+            WidgetCenter.shared.reloadAllTimelines()
             syncNotification()
         } catch { if state == nil { errorMessage = error.localizedDescription } }
     }
@@ -109,13 +111,58 @@ final class StateViewModel: ObservableObject {
     }
 
     func logDiaper(type: String) async {
-        do { try await APIClient.shared.logDiaper(type: type); await refresh() }
-        catch { errorMessage = error.localizedDescription }
+        // Optimistic: append a pending entry so the dashboard badges + log row
+        // update instantly. The network call still happens; the deferred refresh
+        // (after a small DDB-consistency cushion, like startFeeding) swaps the
+        // pending entry's SK for the real one within ~500ms.
+        if var s = state {
+            let f = DateFormatter()
+            f.dateFormat = "yyyy-MM-dd hh:mm a"
+            f.locale = Locale(identifier: "en_US_POSIX")
+            s.diaper_log.append(DiaperEntry(
+                sk: "pending-\(UUID().uuidString)",
+                type: type,
+                date: f.string(from: Date()),
+                created_by: ""
+            ))
+            state = s
+        }
+        do {
+            try await APIClient.shared.logDiaper(type: type)
+            try? await Task.sleep(for: .milliseconds(500))
+            await refresh()
+        } catch {
+            errorMessage = error.localizedDescription
+            await refresh()  // drop the pending entry on failure
+        }
     }
 
     func logNap() async {
-        do { try await APIClient.shared.logNap(); await refresh() }
-        catch { errorMessage = error.localizedDescription }
+        if var s = state {
+            let f = DateFormatter()
+            f.dateFormat = "yyyy-MM-dd hh:mm a"
+            f.locale = Locale(identifier: "en_US_POSIX")
+            let pending = NapEntry(
+                sk: "pending-\(UUID().uuidString)",
+                date: f.string(from: Date()),
+                created_by: "",
+                duration_mins: nil
+            )
+            if s.nap_log != nil {
+                s.nap_log?.append(pending)
+            } else {
+                s.nap_log = [pending]
+            }
+            state = s
+        }
+        do {
+            try await APIClient.shared.logNap()
+            try? await Task.sleep(for: .milliseconds(500))
+            await refresh()
+        } catch {
+            errorMessage = error.localizedDescription
+            await refresh()
+        }
     }
 
     func resetTimer() async {

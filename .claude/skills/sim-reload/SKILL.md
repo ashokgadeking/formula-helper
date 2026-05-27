@@ -35,11 +35,15 @@ Reload the iOS Debug build onto the currently-booted simulator end-to-end. Use w
 
    Run in one shell:
    ```
-   xcrun simctl uninstall <UUID> com.ashokteja.formulahelper 2>/dev/null
    xcrun simctl install <UUID> "$APP"
    xcrun simctl terminate <UUID> com.ashokteja.formulahelper 2>/dev/null
    xcrun simctl launch <UUID> com.ashokteja.formulahelper
    ```
+
+   Do NOT uninstall first — `simctl install` overwrites in place and preserves
+   the app sandbox + keychain, so the user stays signed in across reloads.
+   Only uninstall if entitlements/bundle-id/code-sign changed and install
+   fails; otherwise skip it.
 
 5. **Confirm.** Report booted sim name, new PID, and that the app is live.
 

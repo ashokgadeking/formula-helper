@@ -30,7 +30,12 @@ final class CacheManager: @unchecked Sendable {
         else { return nil }
 
         let elapsed = Date().timeIntervalSince1970 - cached.fetchedAt
-        if elapsed < 0 || elapsed > 3600 { return nil }   // stale beyond 1h — skip
+        // Cache is just a snapshot of immutable log history + a server-anchored
+        // timer end; the widget only needs the latest entries' dates (which never
+        // change) and uses `entry.date` for relative-time math. Don't blank the
+        // widget just because the app hasn't been opened recently — keep the
+        // snapshot for a week.
+        if elapsed < 0 || elapsed > 7 * 24 * 3600 { return nil }
 
         // Adjust remaining_secs
         if cached.state.remaining_secs > 0 {

@@ -511,7 +511,7 @@ private struct DiaperTrends: View {
             // Stat cards
             LazyVGrid(columns: [.init(.flexible()), .init(.flexible()), .init(.flexible())], spacing: 8) {
                 statCard(value: "\(total)",    label: "Total",  color: Color.blue)
-                statCard(value: "\(peeCount)", label: "💧 Pee", color: Color.yellow)
+                statCard(value: "\(peeCount)", label: "🌊 Pee", color: Color.yellow)
                 statCard(value: "\(pooCount)", label: "💩 Poo", color: Color(hex: "#c87941"))
             }
 
