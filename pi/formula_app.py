@@ -1618,10 +1618,13 @@ def main(fullscreen: bool, simulate: bool) -> None:
         if countdown_end > 0 and not ntfy_sent and time.time() > countdown_end:
             ntfy_sent = True
 
-        # Screensaver activation (only from MAIN mode)
-        if mode == AppMode.MAIN and \
+        # Screensaver activation from any non-screensaver mode. After 2 min
+        # of no input we drop into the screensaver regardless of where the
+        # user left the UI, and on dismiss we always return to MAIN so the
+        # device is back at the home screen the next time someone walks up.
+        if mode != AppMode.SCREENSAVER and \
                 time.monotonic() - last_input > ss_timeout_min * 60:
-            pre_ss_mode = mode
+            pre_ss_mode = AppMode.MAIN
             mode = AppMode.SCREENSAVER
             last_frame_key = None
 
