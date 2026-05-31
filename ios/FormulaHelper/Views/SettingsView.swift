@@ -21,6 +21,7 @@ struct SettingsView: View {
                     timerSection
                     presetsSection
                     displaySection
+                    bookooSection
                     if isAdmin { usersSection }
                     aboutSection
                 }
@@ -162,6 +163,38 @@ struct SettingsView: View {
             Text("Affects the lines above and below the bottle timer on the home screen.")
                 .appFont(.footnote)
                 .foregroundColor(Color.secondaryLabel)
+        }
+    }
+
+    @ViewBuilder
+    private var bookooSection: some View {
+        Section {
+            NavigationLink {
+                BookooPairingView()
+            } label: {
+                SettingsRow(
+                    icon: "scalemass.fill",
+                    tint: .orange,
+                    title: "Bookoo Scales",
+                    trailing: bookooTrailing
+                )
+            }
+            .listRowBackground(Color.elevatedBackground)
+        } header: {
+            Text("Auto-log").foregroundColor(Color.secondaryLabel)
+        } footer: {
+            Text("Pair a Bookoo scale to auto-log bottles when you mix them.")
+                .appFont(.footnote)
+                .foregroundColor(Color.secondaryLabel)
+        }
+    }
+
+    private var bookooTrailing: String {
+        let n = BookooManager.shared.pairedScales.count
+        switch n {
+        case 0:  return "Not connected"
+        case 1:  return "1 scale"
+        default: return "\(n) scales"
         }
     }
 

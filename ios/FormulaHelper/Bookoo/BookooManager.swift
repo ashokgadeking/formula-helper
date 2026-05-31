@@ -1,0 +1,366 @@
+import Foundation
+@preconcurrency import CoreBluetooth
+import UserNotifications
+
+private struct UnsafePeripheralBox: @unchecked Sendable {
+    let values: [CBPeripheral]
+    init(_ v: [CBPeripheral]) { self.values = v }
+}
+
+/// Coordinates BLE for all paired Bookoo scales. Survives app termination via
+/// CBCentralManager state restoration so the overnight auto-log workflow
+/// triggers without any phone interaction.
+@MainActor
+final class BookooManager: NSObject, ObservableObject {
+    static let shared = BookooManager()
+
+    // CBUUID is not Sendable, so we can't expose stored instance properties to
+    // nonisolated CB delegate callbacks. Wrap them as nonisolated computed
+    // properties that build the CBUUID on demand — the underlying CBUUID(string:)
+    // call is cheap.
+    nonisolated private var serviceUUID: CBUUID { CBUUID(string: "FFE") }
+    nonisolated private var weightCharUUID: CBUUID { CBUUID(string: "FF11") }
+    nonisolated private var commandCharUUID: CBUUID { CBUUID(string: "FF12") }
+    nonisolated private let restoreID = "com.ashokteja.formulahelper.bookoo"
+
+    private var central: CBCentralManager!
+    private let bleQueue = DispatchQueue(label: "bookoo.ble")
+
+    /// All peripherals iOS has handed us — either freshly discovered, restored,
+    /// or currently connected.
+    private var peripherals: [UUID: CBPeripheral] = [:]
+    private var commandChars: [UUID: CBCharacteristic] = [:]
+    private var sessions: [UUID: BookooSession] = [:]
+
+    @Published private(set) var pairedScales: [PairedScale] = []
+    @Published private(set) var discovered: [DiscoveredScale] = []
+    @Published private(set) var isScanning = false
+    @Published private(set) var bleAuthorized = true
+
+    struct DiscoveredScale: Identifiable, Equatable {
+        let id: UUID
+        let name: String
+        let rssi: Int
+    }
+
+    override init() {
+        super.init()
+        pairedScales = BookooPairingStore.load()
+        // Must construct CBCentralManager early so iOS restores any in-flight
+        // peripherals before the launch sequence completes — that's what makes
+        // background auto-reconnect work.
+        central = CBCentralManager(
+            delegate: self,
+            queue: bleQueue,
+            options: [CBCentralManagerOptionRestoreIdentifierKey: restoreID]
+        )
+    }
+
+    // MARK: - Public API
+
+    func startDiscoveryScan() {
+        Task { @MainActor in
+            discovered = []
+            if central.state == .poweredOn {
+                central.scanForPeripherals(
+                    withServices: [serviceUUID],
+                    options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
+                )
+                isScanning = true
+                // Auto-stop after 30s so we don't drain battery if the user
+                // backgrounds the pairing sheet.
+                Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(30))
+                    stopDiscoveryScan()
+                }
+            }
+        }
+    }
+
+    func stopDiscoveryScan() {
+        central.stopScan()
+        isScanning = false
+        // Resume the passive paired-scale rescan so connections still establish.
+        startPairedRescanIfNeeded()
+    }
+
+    func pair(_ d: DiscoveredScale, named name: String) {
+        let scale = PairedScale(
+            id: d.id,
+            name: name,
+            pairedAt: Date(),
+            lastSeenAt: nil,
+            lastBatteryPct: nil
+        )
+        pairedScales = BookooPairingStore.upsert(scale)
+        // Kick connection so the user sees status update immediately.
+        if let p = peripherals[d.id] {
+            central.connect(p, options: nil)
+        } else {
+            startPairedRescanIfNeeded()
+        }
+    }
+
+    func rename(id: UUID, to name: String) {
+        guard let i = pairedScales.firstIndex(where: { $0.id == id }) else { return }
+        pairedScales[i].name = name
+        BookooPairingStore.save(pairedScales)
+    }
+
+    func unpair(id: UUID) {
+        if let p = peripherals[id] { central.cancelPeripheralConnection(p) }
+        peripherals.removeValue(forKey: id)
+        commandChars.removeValue(forKey: id)
+        sessions.removeValue(forKey: id)
+        pairedScales = BookooPairingStore.remove(id: id)
+    }
+
+    /// Flush any pending logs accumulated while offline / unauthenticated.
+    /// Called from the app on foreground and after every successful BLE log.
+    func flushPendingLogs() async {
+        let pending = BookooPairingStore.loadPending()
+        guard !pending.isEmpty else { return }
+        var remaining: [BookooPairingStore.PendingLog] = []
+        for p in pending {
+            do {
+                _ = try await APIClient.shared.logEntry(ml: p.ml, date: nil)
+                _ = try await APIClient.shared.startFeeding(ml: p.ml)
+            } catch {
+                remaining.append(p)
+            }
+        }
+        BookooPairingStore.savePending(remaining)
+    }
+
+    // MARK: - Internals
+
+    private func startPairedRescanIfNeeded() {
+        guard central.state == .poweredOn else { return }
+        guard !pairedScales.isEmpty else { return }
+        // Passive scan filtered by service UUID — cheap. iOS coalesces it with
+        // any other CB scan running. AllowDuplicates=false because we only need
+        // the first sighting to trigger a connect.
+        central.scanForPeripherals(
+            withServices: [serviceUUID],
+            options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
+        )
+    }
+
+    private func handleReading(_ r: BookooReading, from id: UUID) {
+        BookooPairingStore.updateLastSeen(id: id, batteryPct: r.batteryPct)
+        if let idx = pairedScales.firstIndex(where: { $0.id == id }) {
+            pairedScales[idx].lastSeenAt = Date()
+            pairedScales[idx].lastBatteryPct = r.batteryPct
+        }
+
+        let session = sessions[id] ?? {
+            let s = BookooSession(peripheralID: id)
+            s.onLog = { [weak self] ml, peripheralID in
+                self?.performLog(ml: ml, peripheralID: peripheralID)
+            }
+            sessions[id] = s
+            return s
+        }()
+        session.ingest(r)
+    }
+
+    private func performLog(ml: Int, peripheralID: UUID) {
+        let scaleName = pairedScales.first { $0.id == peripheralID }?.name ?? "Bookoo"
+        Task { @MainActor in
+            do {
+                _ = try await APIClient.shared.logEntry(ml: ml, date: nil)
+                _ = try await APIClient.shared.startFeeding(ml: ml)
+                sendBeep(peripheralID: peripheralID)
+                postLogNotification(ml: ml, scaleName: scaleName)
+                await flushPendingLogs()
+            } catch APIError.badStatus(401, _) {
+                postAuthRequiredNotification()
+            } catch {
+                BookooPairingStore.enqueuePending(
+                    .init(ml: ml, scaleID: peripheralID, ts: Date())
+                )
+                postRetryQueuedNotification(ml: ml)
+            }
+        }
+    }
+
+    private func sendBeep(peripheralID: UUID) {
+        guard let p = peripherals[peripheralID],
+              let c = commandChars[peripheralID]
+        else { return }
+        // .withResponse is more reliable for short writes; the bookoo scale
+        // implements both. Failure is silent — the log already succeeded.
+        p.writeValue(BookooCommand.startTimer, for: c, type: .withResponse)
+    }
+
+    private func postLogNotification(ml: Int, scaleName: String) {
+        let content = UNMutableNotificationContent()
+        content.title = "Logged \(ml) ml bottle"
+        content.body = "Bookoo · \(scaleName)"
+        content.sound = .default
+        let req = UNNotificationRequest(
+            identifier: "bookoo-log-\(UUID().uuidString)",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(req)
+    }
+
+    private func postAuthRequiredNotification() {
+        let content = UNMutableNotificationContent()
+        content.title = "AvantiLog needs you to sign in"
+        content.body = "Open the app and sign in so I can log future bottles."
+        content.sound = .default
+        let req = UNNotificationRequest(
+            identifier: "bookoo-auth-\(UUID().uuidString)",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(req)
+    }
+
+    private func postRetryQueuedNotification(ml: Int) {
+        let content = UNMutableNotificationContent()
+        content.title = "Couldn't reach the server"
+        content.body = "Will retry the \(ml) ml log when AvantiLog is online."
+        content.sound = .default
+        let req = UNNotificationRequest(
+            identifier: "bookoo-retry-\(UUID().uuidString)",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(req)
+    }
+}
+
+// MARK: - CBCentralManagerDelegate
+
+extension BookooManager: CBCentralManagerDelegate {
+    nonisolated func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
+        guard let restored = dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral] else { return }
+        // Wrap in a Sendable box so Swift 6 strict concurrency lets us send
+        // the legacy CoreBluetooth array across the actor hop. We're the only
+        // owner — no races.
+        let box = UnsafePeripheralBox(restored)
+        Task { @MainActor in
+            for p in box.values {
+                p.delegate = self
+                peripherals[p.identifier] = p
+                if p.state == .connected {
+                    p.discoverServices([serviceUUID])
+                }
+            }
+        }
+    }
+
+    nonisolated func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        Task { @MainActor in
+            bleAuthorized = central.state != .unauthorized
+            if central.state == .poweredOn {
+                startPairedRescanIfNeeded()
+            }
+        }
+    }
+
+    nonisolated func centralManager(
+        _ central: CBCentralManager,
+        didDiscover peripheral: CBPeripheral,
+        advertisementData: [String: Any],
+        rssi RSSI: NSNumber
+    ) {
+        let name = peripheral.name
+            ?? (advertisementData[CBAdvertisementDataLocalNameKey] as? String)
+            ?? "Bookoo"
+        let pid = peripheral.identifier
+        let rssi = RSSI.intValue
+        Task { @MainActor in
+            peripherals[pid] = peripheral
+            peripheral.delegate = self
+
+            // If this is a paired scale, connect immediately.
+            if pairedScales.contains(where: { $0.id == pid }) {
+                central.connect(peripheral, options: nil)
+                return
+            }
+
+            // Otherwise it's a discovery scan result — surface to the UI.
+            if isScanning,
+               !discovered.contains(where: { $0.id == pid })
+            {
+                discovered.append(DiscoveredScale(id: pid, name: name, rssi: rssi))
+            }
+        }
+    }
+
+    nonisolated func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        let pid = peripheral.identifier
+        Task { @MainActor in
+            peripheral.delegate = self
+            peripheral.discoverServices([serviceUUID])
+            // Restart paired rescan so other paired scales also auto-connect
+            // when they come online. Calling discover scan twice is safe; iOS
+            // coalesces.
+            _ = pid
+        }
+    }
+
+    nonisolated func centralManager(
+        _ central: CBCentralManager,
+        didDisconnectPeripheral peripheral: CBPeripheral,
+        error: Error?
+    ) {
+        let pid = peripheral.identifier
+        Task { @MainActor in
+            commandChars.removeValue(forKey: pid)
+            sessions[pid] = nil
+            // 2s backoff before resuming the rescan to avoid hot-spinning when
+            // the scale auto-shuts off.
+            try? await Task.sleep(for: .seconds(2))
+            startPairedRescanIfNeeded()
+        }
+    }
+}
+
+// MARK: - CBPeripheralDelegate
+
+extension BookooManager: CBPeripheralDelegate {
+    nonisolated func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
+        Task { @MainActor in
+            for svc in peripheral.services ?? [] where svc.uuid == serviceUUID {
+                peripheral.discoverCharacteristics([weightCharUUID, commandCharUUID], for: svc)
+            }
+        }
+    }
+
+    nonisolated func peripheral(
+        _ peripheral: CBPeripheral,
+        didDiscoverCharacteristicsFor service: CBService,
+        error: Error?
+    ) {
+        let pid = peripheral.identifier
+        Task { @MainActor in
+            for c in service.characteristics ?? [] {
+                if c.uuid == weightCharUUID {
+                    peripheral.setNotifyValue(true, for: c)
+                } else if c.uuid == commandCharUUID {
+                    commandChars[pid] = c
+                }
+            }
+        }
+    }
+
+    nonisolated func peripheral(
+        _ peripheral: CBPeripheral,
+        didUpdateValueFor characteristic: CBCharacteristic,
+        error: Error?
+    ) {
+        guard characteristic.uuid == weightCharUUID,
+              let data = characteristic.value,
+              let reading = BookooPacket.parse(data)
+        else { return }
+        let pid = peripheral.identifier
+        Task { @MainActor in
+            handleReading(reading, from: pid)
+        }
+    }
+}
