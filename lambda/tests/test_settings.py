@@ -3,7 +3,7 @@
 import time
 import json
 import pytest
-from tests.conftest import make_event, parse_response
+from .conftest import make_event, parse_response
 
 
 class TestSettings:

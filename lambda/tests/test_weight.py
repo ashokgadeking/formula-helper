@@ -1,7 +1,7 @@
 """Tests for POST /api/weight — uploading weight log."""
 
 import pytest
-from tests.conftest import make_event, parse_response
+from .conftest import make_event, parse_response
 
 
 class TestPostWeight:

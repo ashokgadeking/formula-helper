@@ -4,7 +4,7 @@ import time
 import json
 import pytest
 from decimal import Decimal
-from tests.conftest import make_event, parse_response
+from .conftest import make_event, parse_response
 
 
 class TestPostStart:

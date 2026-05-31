@@ -70,6 +70,16 @@ final class StateViewModel: ObservableObject {
         } catch { if state == nil { errorMessage = error.localizedDescription } }
     }
 
+    /// Push the current in-memory state to the App Group cache and ask
+    /// WidgetKit to reload the widget timelines. Call after optimistic updates
+    /// so the lock-screen widgets reflect the new entry within a fraction of a
+    /// second instead of waiting for the server roundtrip + refresh().
+    private func pushOptimisticToWidgets() {
+        guard let s = state else { return }
+        CacheManager.shared.save(s)
+        WidgetCenter.shared.reloadAllTimelines()
+    }
+
     func startFeeding(ml: Int) async {
         // Optimistic: update local state so the banner/timer renders immediately.
         if var s = state {
@@ -95,6 +105,7 @@ final class StateViewModel: ObservableObject {
             s.mix_log.append(pending)
             state = s
             syncNotification()
+            pushOptimisticToWidgets()
         }
         do {
             let _ = try await APIClient.shared.startFeeding(ml: ml)
@@ -126,6 +137,7 @@ final class StateViewModel: ObservableObject {
                 created_by: ""
             ))
             state = s
+            pushOptimisticToWidgets()
         }
         do {
             try await APIClient.shared.logDiaper(type: type)
@@ -154,6 +166,7 @@ final class StateViewModel: ObservableObject {
                 s.nap_log = [pending]
             }
             state = s
+            pushOptimisticToWidgets()
         }
         do {
             try await APIClient.shared.logNap()

@@ -5,7 +5,7 @@ import json
 import pytest
 from decimal import Decimal
 from unittest.mock import patch, MagicMock
-from tests.conftest import make_event, parse_response
+from .conftest import make_event, parse_response
 
 
 class TestExpiryNotification:
