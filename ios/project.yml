@@ -6,11 +6,16 @@ options:
   defaultConfig: Debug
   xcodeVersion: "16"
 
+configs:
+  Debug: debug
+  Release: release
+  DevRelease: release
+
 settings:
   base:
     SWIFT_VERSION: "6.0"
     MARKETING_VERSION: "1.0.0"
-    CURRENT_PROJECT_VERSION: "47"
+    CURRENT_PROJECT_VERSION: "50"
 
 targets:
   FormulaHelper:
@@ -33,7 +38,7 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
-        CFBundleDisplayName: Formula Helper
+        CFBundleDisplayName: AvantiLog
         ITSAppUsesNonExemptEncryption: false
         UIAppFonts:
           - Outfit-Variable.ttf
@@ -51,6 +56,13 @@ targets:
           CODE_SIGN_IDENTITY: "Apple Distribution: ASHOK TEJA GADEPALLI (TV6FL9FHCE)"
           PROVISIONING_PROFILE_SPECIFIER: FormulaHelperAppStore
           PROVISIONING_PROFILE: "0a11f570-f456-4eb4-a271-4a5198020e68"
+        DevRelease:
+          PRODUCT_BUNDLE_IDENTIFIER: com.ashokteja.formulahelper.dev
+          ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon-Dev
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: "Apple Distribution: ASHOK TEJA GADEPALLI (TV6FL9FHCE)"
+          PROVISIONING_PROFILE_SPECIFIER: AvantiLog Dev AppStore
+          PROVISIONING_PROFILE: "bb29651f-0741-4bf3-9504-551e54bca853"
     entitlements:
       path: FormulaHelper/FormulaHelper.entitlements
       properties:
@@ -92,6 +104,12 @@ targets:
           CODE_SIGN_IDENTITY: "Apple Distribution: ASHOK TEJA GADEPALLI (TV6FL9FHCE)"
           PROVISIONING_PROFILE_SPECIFIER: FormulaHelperWidgetsAppStore
           PROVISIONING_PROFILE: "efbe7ee5-50ea-4876-98f9-98a0300c043e"
+        DevRelease:
+          PRODUCT_BUNDLE_IDENTIFIER: com.ashokteja.formulahelper.dev.widgets
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: "Apple Distribution: ASHOK TEJA GADEPALLI (TV6FL9FHCE)"
+          PROVISIONING_PROFILE_SPECIFIER: AvantiLog Dev Widgets AppStore
+          PROVISIONING_PROFILE: "397a61d7-fcb1-4ad3-a672-284b1fea477e"
     entitlements:
       path: FormulaHelperWidgets/FormulaHelperWidgets.entitlements
       properties:
