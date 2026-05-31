@@ -22,9 +22,15 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>AvantiLog connects to your Bookoo scale to auto-log bottle feedings.</string>
 	<key>UIAppFonts</key>
 	<array>
 		<string>Outfit-Variable.ttf</string>
+	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>bluetooth-central</string>
 	</array>
 	<key>UILaunchScreen</key>
 	<dict/>

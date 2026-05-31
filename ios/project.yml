@@ -35,6 +35,9 @@ targets:
           - UIInterfaceOrientationLandscapeRight
         CFBundleDisplayName: Formula Helper
         ITSAppUsesNonExemptEncryption: false
+        NSBluetoothAlwaysUsageDescription: "AvantiLog connects to your Bookoo scale to auto-log bottle feedings."
+        UIBackgroundModes:
+          - bluetooth-central
         UIAppFonts:
           - Outfit-Variable.ttf
     settings:

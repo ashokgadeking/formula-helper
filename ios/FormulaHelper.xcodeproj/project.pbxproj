@@ -7,14 +7,20 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		1221B97638B76131A9A65FBC /* BookooCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C6B96C3B24E0EF89AB70022 /* BookooCommands.swift */; };
 		137176613AD49EAF6B40B66D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 6FCFBF8350CCD405F8977CF8 /* Assets.xcassets */; };
 		16644299F6F7443C8DA73B93 /* DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F233BF622763B28F4D9F06F /* DesignSystem.swift */; };
 		1AE309933D26459BE2DCB2C6 /* TrendsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AEE53434508F0BF501AD92CD /* TrendsView.swift */; };
+		22D034691A6E585FC7FFFAAD /* BookooPacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5229756CB09881F4CD451CA7 /* BookooPacket.swift */; };
+		25D8D8612C1D9AD266767E18 /* BookooPairingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8286EAF02DA620462AF0F89C /* BookooPairingView.swift */; };
 		32793DC0B0FC112575AF3A20 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F917BF7C45D10DCAA817C0C /* ContentView.swift */; };
+		5A5C9A61D7D9AA35C04C4CA6 /* BookooManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E13D6385118073C8F475282 /* BookooManager.swift */; };
 		68513A34603B030B1EB8FCC3 /* CacheManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2363D7073E8B031E8C31C189 /* CacheManager.swift */; };
 		76D9131BEEE2102A74FB8378 /* Outfit-Variable.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 9005B77617B063E3AFAEF723 /* Outfit-Variable.ttf */; };
+		7C19AE140516AAF980325C79 /* BookooSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = BADA816369F6603346F6504E /* BookooSession.swift */; };
 		7FAE34D8C74923641DE95D29 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16D740D538E64898893C6969 /* SettingsView.swift */; };
 		832170DC952B2F9E6177832B /* AuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16E2C4733A3BDD5F6C82C9D3 /* AuthManager.swift */; };
+		84996A4BCF6AEB26C189FD0F /* BookooPairing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14A01829AF1E867E7C693272 /* BookooPairing.swift */; };
 		8853C3A9552587C7D9016EAE /* Charts.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8677FBFD9841ABCADDA8D499 /* Charts.framework */; };
 		88D3CE185300E009C65594AE /* CacheManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2363D7073E8B031E8C31C189 /* CacheManager.swift */; };
 		9A0AF75AD8DA8D006058C376 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC7BA17B83F1BF39E610886B /* APIClient.swift */; };
@@ -55,23 +61,29 @@
 /* Begin PBXFileReference section */
 		06FD3459A1C69170F7BB04CD /* FormulaHelperWidgets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FormulaHelperWidgets.swift; sourceTree = "<group>"; };
 		11F689A0294A9A306F7D756B /* FormulaHelper.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = FormulaHelper.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		14A01829AF1E867E7C693272 /* BookooPairing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookooPairing.swift; sourceTree = "<group>"; };
 		16D740D538E64898893C6969 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		16E2C4733A3BDD5F6C82C9D3 /* AuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthManager.swift; sourceTree = "<group>"; };
+		1C6B96C3B24E0EF89AB70022 /* BookooCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookooCommands.swift; sourceTree = "<group>"; };
 		1DB7DEBE84588B0B0849C821 /* FormulaHelperApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FormulaHelperApp.swift; sourceTree = "<group>"; };
 		2363D7073E8B031E8C31C189 /* CacheManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CacheManager.swift; sourceTree = "<group>"; };
 		448C4C8C1004E4B158DBD226 /* FormulaHelperWidgets.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = FormulaHelperWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		5229756CB09881F4CD451CA7 /* BookooPacket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookooPacket.swift; sourceTree = "<group>"; };
 		5433D692DBC2A2D9B382A24E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		59B86C6F62095D372CC7DE00 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
 		5F3211C08FABC08CE2EB1CE0 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		6FCFBF8350CCD405F8977CF8 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		7DDBDF0AD2A1371BD9144AE7 /* FormulaHelper.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FormulaHelper.entitlements; sourceTree = "<group>"; };
+		7E13D6385118073C8F475282 /* BookooManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookooManager.swift; sourceTree = "<group>"; };
 		7FC10E41A03C0F1761B99FDA /* AuthView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthView.swift; sourceTree = "<group>"; };
+		8286EAF02DA620462AF0F89C /* BookooPairingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookooPairingView.swift; sourceTree = "<group>"; };
 		8602640337F088BA7116087D /* NotificationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationManager.swift; sourceTree = "<group>"; };
 		8677FBFD9841ABCADDA8D499 /* Charts.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Charts.framework; path = System/Library/Frameworks/Charts.framework; sourceTree = SDKROOT; };
 		8F917BF7C45D10DCAA817C0C /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		9005B77617B063E3AFAEF723 /* Outfit-Variable.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Outfit-Variable.ttf"; sourceTree = "<group>"; };
 		9F233BF622763B28F4D9F06F /* DesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignSystem.swift; sourceTree = "<group>"; };
 		AEE53434508F0BF501AD92CD /* TrendsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrendsView.swift; sourceTree = "<group>"; };
+		BADA816369F6603346F6504E /* BookooSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookooSession.swift; sourceTree = "<group>"; };
 		DC7BA17B83F1BF39E610886B /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		F176CA9E0656EDAEFB3EA9ED /* LogsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogsView.swift; sourceTree = "<group>"; };
 		F98B2806D638518BC4FCF037 /* FormulaHelperWidgets.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FormulaHelperWidgets.entitlements; sourceTree = "<group>"; };
@@ -148,6 +160,19 @@
 			path = Resources;
 			sourceTree = "<group>";
 		};
+		79F9AC7A9D564337853EB737 /* Bookoo */ = {
+			isa = PBXGroup;
+			children = (
+				1C6B96C3B24E0EF89AB70022 /* BookooCommands.swift */,
+				7E13D6385118073C8F475282 /* BookooManager.swift */,
+				5229756CB09881F4CD451CA7 /* BookooPacket.swift */,
+				14A01829AF1E867E7C693272 /* BookooPairing.swift */,
+				8286EAF02DA620462AF0F89C /* BookooPairingView.swift */,
+				BADA816369F6603346F6504E /* BookooSession.swift */,
+			);
+			path = Bookoo;
+			sourceTree = "<group>";
+		};
 		801E82FE28B7969D92E8503C /* FormulaHelper */ = {
 			isa = PBXGroup;
 			children = (
@@ -156,6 +181,7 @@
 				1DB7DEBE84588B0B0849C821 /* FormulaHelperApp.swift */,
 				5433D692DBC2A2D9B382A24E /* Info.plist */,
 				70412E56498881B10EE739FF /* Auth */,
+				79F9AC7A9D564337853EB737 /* Bookoo */,
 				658336434002C30E7596FF17 /* Cache */,
 				981F0145FE804319D8FFC6C7 /* Models */,
 				9F47C14FFD12C6C2F8EEE37C /* Networking */,
@@ -312,6 +338,12 @@
 				9A13415480C3C6B46FF29CA1 /* AppState.swift in Sources */,
 				832170DC952B2F9E6177832B /* AuthManager.swift in Sources */,
 				F714F486D1F608AEC89306CF /* AuthView.swift in Sources */,
+				1221B97638B76131A9A65FBC /* BookooCommands.swift in Sources */,
+				5A5C9A61D7D9AA35C04C4CA6 /* BookooManager.swift in Sources */,
+				22D034691A6E585FC7FFFAAD /* BookooPacket.swift in Sources */,
+				84996A4BCF6AEB26C189FD0F /* BookooPairing.swift in Sources */,
+				25D8D8612C1D9AD266767E18 /* BookooPairingView.swift in Sources */,
+				7C19AE140516AAF980325C79 /* BookooSession.swift in Sources */,
 				88D3CE185300E009C65594AE /* CacheManager.swift in Sources */,
 				32793DC0B0FC112575AF3A20 /* ContentView.swift in Sources */,
 				16644299F6F7443C8DA73B93 /* DesignSystem.swift in Sources */,
