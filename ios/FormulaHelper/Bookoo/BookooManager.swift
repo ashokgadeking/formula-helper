@@ -18,7 +18,7 @@ final class BookooManager: NSObject, ObservableObject {
     // nonisolated CB delegate callbacks. Wrap them as nonisolated computed
     // properties that build the CBUUID on demand — the underlying CBUUID(string:)
     // call is cheap.
-    nonisolated private var serviceUUID: CBUUID { CBUUID(string: "FFE") }
+    nonisolated private var serviceUUID: CBUUID { CBUUID(string: "0FFE") }
     nonisolated private var weightCharUUID: CBUUID { CBUUID(string: "FF11") }
     nonisolated private var commandCharUUID: CBUUID { CBUUID(string: "FF12") }
     nonisolated private let restoreID = "com.ashokteja.formulahelper.bookoo"
