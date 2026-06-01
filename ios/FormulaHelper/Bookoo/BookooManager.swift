@@ -38,6 +38,8 @@ final class BookooManager: NSObject, ObservableObject {
     @Published private(set) var bleAuthorized = true
     /// Global dry-bottle calibration, shared across all scales.
     @Published private(set) var dryBottleWeight: Double?
+    /// Peripherals currently connected (BLE link up).
+    @Published private(set) var connectedIDs: Set<UUID> = []
     /// Live debug per peripheral — last raw reading + session phase. Used by the
     /// pairing UI to confirm packets are arriving and the state machine is
     /// progressing as expected.
@@ -185,8 +187,8 @@ final class BookooManager: NSObject, ObservableObject {
 
         let session = sessions[id] ?? {
             let s = BookooSession(peripheralID: id)
-            s.onLog = { [weak self] ml, measuredGrams, _, peripheralID in
-                self?.performLog(ml: ml, measuredGrams: measuredGrams, peripheralID: peripheralID)
+            s.onLog = { [weak self] ml, measuredGrams, unroundedMl, peripheralID in
+                self?.performLog(ml: ml, measuredGrams: measuredGrams, unroundedMl: unroundedMl, peripheralID: peripheralID)
             }
             sessions[id] = s
             return s
@@ -215,7 +217,7 @@ final class BookooManager: NSObject, ObservableObject {
         }
     }
 
-    private func performLog(ml: Int, measuredGrams: Double, peripheralID: UUID) {
+    private func performLog(ml: Int, measuredGrams: Double, unroundedMl: Double, peripheralID: UUID) {
         let scaleName = pairedScales.first { $0.id == peripheralID }?.name ?? "Bookoo"
         Task { @MainActor in
             do {
@@ -223,7 +225,7 @@ final class BookooManager: NSObject, ObservableObject {
                 // entry server-side. Calling /api/log here too would double-log.
                 let resp = try await APIClient.shared.startFeeding(ml: ml)
                 if let sk = resp.sk {
-                    BookooPairingStore.recordMeasuredGrams(sk: sk, grams: measuredGrams)
+                    BookooPairingStore.recordMeasured(sk: sk, grams: measuredGrams, ml: unroundedMl)
                 }
                 sendBeep(peripheralID: peripheralID)
                 postLogNotification(ml: ml, scaleName: scaleName)
@@ -304,6 +306,7 @@ extension BookooManager: CBCentralManagerDelegate {
                 p.delegate = self
                 peripherals[p.identifier] = p
                 if p.state == .connected {
+                    connectedIDs.insert(p.identifier)
                     p.discoverServices([serviceUUID])
                 }
             }
@@ -352,6 +355,7 @@ extension BookooManager: CBCentralManagerDelegate {
     nonisolated func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         let pid = peripheral.identifier
         Task { @MainActor in
+            connectedIDs.insert(pid)
             peripheral.delegate = self
             peripheral.discoverServices([serviceUUID])
             // Restart paired rescan so other paired scales also auto-connect
@@ -368,6 +372,7 @@ extension BookooManager: CBCentralManagerDelegate {
     ) {
         let pid = peripheral.identifier
         Task { @MainActor in
+            connectedIDs.remove(pid)
             commandChars.removeValue(forKey: pid)
             sessions[pid] = nil
             // 2s backoff before resuming the rescan to avoid hot-spinning when

@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 
 struct BookooPairingView: View {
     @ObservedObject private var manager = BookooManager.shared
@@ -101,35 +100,42 @@ struct BookooPairingView: View {
                     .listRowBackground(Color.elevatedBackground)
             } else {
                 ForEach(manager.pairedScales) { scale in
-                    pairedRow(scale)
-                        .listRowBackground(Color.elevatedBackground)
-                        .swipeActions(edge: .trailing) {
-                            Button(role: .destructive) {
-                                manager.unpair(id: scale.id)
-                            } label: {
-                                Label("Remove", systemImage: "trash")
-                            }
-                            Button {
-                                renameDraft = scale.name
-                                renameID = scale.id
-                            } label: {
-                                Label("Rename", systemImage: "pencil")
-                            }
-                            .tint(.blue)
+                    Button {
+                        renameDraft = scale.name
+                        renameID = scale.id
+                    } label: {
+                        pairedRow(scale)
+                    }
+                    .buttonStyle(.plain)
+                    .listRowBackground(Color.elevatedBackground)
+                    .swipeActions(edge: .trailing) {
+                        Button(role: .destructive) {
+                            manager.unpair(id: scale.id)
+                        } label: {
+                            Label("Remove", systemImage: "trash")
                         }
+                        Button {
+                            renameDraft = scale.name
+                            renameID = scale.id
+                        } label: {
+                            Label("Rename", systemImage: "pencil")
+                        }
+                        .tint(.blue)
+                    }
                 }
             }
         } header: {
             Text("Paired").foregroundColor(Color.secondaryLabel)
         } footer: {
-            Text("Bottles you mix on these scales auto-log to AvantiLog.")
+            Text("Tap a scale to rename it. Bottles you mix on these scales auto-log to AvantiLog.")
                 .appFont(.footnote)
                 .foregroundColor(Color.secondaryLabel)
         }
     }
 
     private func pairedRow(_ scale: PairedScale) -> some View {
-        HStack(spacing: 12) {
+        let connected = manager.connectedIDs.contains(scale.id)
+        return HStack(spacing: 12) {
             Image(systemName: "scalemass.fill")
                 .font(.system(size: 18))
                 .foregroundColor(.orange)
@@ -139,58 +145,25 @@ struct BookooPairingView: View {
                 Text(scale.name)
                     .appFont(.body)
                     .foregroundColor(Color.primaryLabel)
-                if let last = scale.lastSeenAt {
-                    HStack(spacing: 6) {
-                        if let pct = scale.lastBatteryPct {
-                            Text("\(pct)% battery")
-                        }
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(connected ? Color.green : Color.secondaryLabel)
+                        .frame(width: 7, height: 7)
+                    Text(connected ? "Connected" : "Disconnected")
+                    if connected, let pct = scale.lastBatteryPct {
                         Text("·")
-                        Text("Seen \(last, style: .relative) ago")
+                        Text("\(pct)% battery")
                     }
-                    .appFont(.footnote)
-                    .foregroundColor(Color.secondaryLabel)
-                } else {
-                    Text("Not yet seen")
-                        .appFont(.footnote)
-                        .foregroundColor(Color.secondaryLabel)
                 }
-                if let dbg = manager.debugInfo[scale.id] {
-                    let snippet = debugSnippet(dbg)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("Live: \(String(format: "%.1f", dbg.weightG))g · \(dbg.phase)")
-                        Text("Max signed: \(String(format: "%.1f", dbg.maxWeightEver))g")
-                        Text("Max |raw|: \(String(format: "%.1f", dbg.maxMagnitudeEver))g")
-                        Text("packets: \(dbg.packetCount) · b6=0x\(String(format: "%02X", dbg.lastSignByte))")
-                        Text(dbg.lastRawHex)
-                            .font(.system(size: 9, design: .monospaced))
-                        Button {
-                            UIPasteboard.general.string = snippet
-                        } label: {
-                            Label("Copy debug", systemImage: "doc.on.doc")
-                                .appFont(.footnote)
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.mini)
-                        .padding(.top, 2)
-                    }
-                    .appFont(.footnote)
-                    .foregroundColor(.blue)
-                    .monospacedDigit()
-                }
+                .appFont(.footnote)
+                .foregroundColor(connected ? Color.green : Color.secondaryLabel)
             }
             Spacer()
+            Image(systemName: "pencil")
+                .font(.system(size: 13))
+                .foregroundColor(Color.tertiaryLabel)
         }
-    }
-
-    private func debugSnippet(_ dbg: BookooManager.DebugRow) -> String {
-        """
-        Live: \(String(format: "%.2f", dbg.weightG))g · \(dbg.phase)
-        Max signed: \(String(format: "%.2f", dbg.maxWeightEver))g
-        Max |raw|:  \(String(format: "%.2f", dbg.maxMagnitudeEver))g
-        packets: \(dbg.packetCount)
-        b6=0x\(String(format: "%02X", dbg.lastSignByte))
-        hex: \(dbg.lastRawHex)
-        """
+        .contentShape(Rectangle())
     }
 
     // MARK: - Discovery

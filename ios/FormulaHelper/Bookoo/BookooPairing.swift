@@ -123,17 +123,34 @@ enum BookooPairingStore {
     /// value here keyed by the returned log sk so the edit panel can surface
     /// it instead of recomputing from the formula ratio.
     private static let measuredKey = "bookoo.measured_grams_by_sk"
+    private static let measuredMlKey = "bookoo.measured_ml_by_sk"
 
     static func loadMeasuredGrams() -> [String: Double] {
-        guard let data = defaults?.data(forKey: measuredKey),
+        decodeMap(measuredKey)
+    }
+
+    /// Unrounded water ml the scale measured for this log (the logged ml itself
+    /// is snapped to the nearest 10). Used to show the true value in the edit
+    /// panel's recipe line.
+    static func loadMeasuredMl() -> [String: Double] {
+        decodeMap(measuredMlKey)
+    }
+
+    static func recordMeasured(sk: String, grams: Double, ml: Double) {
+        writeCapped(measuredKey, sk: sk, value: grams)
+        writeCapped(measuredMlKey, sk: sk, value: ml)
+    }
+
+    private static func decodeMap(_ key: String) -> [String: Double] {
+        guard let data = defaults?.data(forKey: key),
               let map = try? JSONDecoder().decode([String: Double].self, from: data)
         else { return [:] }
         return map
     }
 
-    static func recordMeasuredGrams(sk: String, grams: Double) {
-        var map = loadMeasuredGrams()
-        map[sk] = grams
+    private static func writeCapped(_ key: String, sk: String, value: Double) {
+        var map = decodeMap(key)
+        map[sk] = value
         // Cap at 500 entries to keep the dict bounded. Oldest by iteration order
         // when over cap — good enough since this is a UX hint, not a system of
         // record.
@@ -141,7 +158,7 @@ enum BookooPairingStore {
             map = Dictionary(uniqueKeysWithValues: map.suffix(500).map { ($0.key, $0.value) })
         }
         if let data = try? JSONEncoder().encode(map) {
-            defaults?.set(data, forKey: measuredKey)
+            defaults?.set(data, forKey: key)
         }
     }
 }

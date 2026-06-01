@@ -40,7 +40,7 @@ final class BookooSession {
     private var smoothedWeight: Double = 0
     private var smoothedSeeded = false
 
-    var onLog: ((_ ml: Int, _ measuredGrams: Double, _ liftMagnitudeG: Double, _ peripheralID: UUID) -> Void)?
+    var onLog: ((_ ml: Int, _ measuredGrams: Double, _ unroundedMl: Double, _ peripheralID: UUID) -> Void)?
 
     init(peripheralID: UUID) {
         self.peripheralID = peripheralID
@@ -115,14 +115,22 @@ final class BookooSession {
         let formula: Double? = powderPer60 > 0 ? addedGrams * 60.0 / powderPer60 : nil
 
         // Prefer calibration, but only if it rounds in range; otherwise fall
-        // back to formula. Reset (no log) only if neither is usable.
+        // back to formula. Reset (no log) only if neither is usable. Keep the
+        // unrounded ml that produced the logged value so the edit panel can
+        // show the true measurement.
         func roundedInRange(_ ml: Double?) -> Int? {
             guard let ml else { return nil }
             let r = Int((ml / 10.0).rounded()) * 10
             return (r >= mlFloor && r <= mlCeiling) ? r : nil
         }
 
-        guard let rounded = roundedInRange(calibrated) ?? roundedInRange(formula) else {
+        let rounded: Int
+        let unroundedMl: Double
+        if let r = roundedInRange(calibrated), let c = calibrated {
+            rounded = r; unroundedMl = c
+        } else if let r = roundedInRange(formula), let f = formula {
+            rounded = r; unroundedMl = f
+        } else {
             // Nothing usable — reset and wait for the next prep.
             phase = .logged(at: now); peak = 0
             smoothedWeight = 0; smoothedSeeded = false
@@ -134,6 +142,6 @@ final class BookooSession {
         peak = 0
         smoothedWeight = 0
         smoothedSeeded = false
-        onLog?(rounded, measured, liftMagnitudeG, peripheralID)
+        onLog?(rounded, measured, unroundedMl, peripheralID)
     }
 }

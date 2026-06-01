@@ -603,6 +603,7 @@ struct LogRow: View {
     /// Cached at long-press time so we don't churn UserDefaults on every
     /// SwiftUI re-render of an expanded row.
     @State private var measuredGramsCache: Double?
+    @State private var measuredMlCache: Double?
 
     private static let parseFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -631,15 +632,18 @@ struct LogRow: View {
     /// fall back to the formula-derived guess based on the household's
     /// powder_per_60 ratio. Uses the live `mlText` so it updates as the user
     /// edits.
-    var recipeBreakdown: (waterMl: Int, powderG: String, isMeasured: Bool)? {
+    var recipeBreakdown: (waterMl: String, powderG: String, isMeasured: Bool)? {
         let ml = Int(mlText.trimmingCharacters(in: .whitespaces)) ?? entry.ml
         guard ml > 0 else { return nil }
         if let measured = measuredGramsCache {
-            return (waterMl: ml, powderG: String(format: "%.2f", measured), isMeasured: true)
+            // Show the unrounded measured water ml when we have it (the logged
+            // ml is snapped to 10); fall back to the rounded logged ml.
+            let waterStr = measuredMlCache.map { String(format: "%.1f", $0) } ?? "\(ml)"
+            return (waterMl: waterStr, powderG: String(format: "%.2f", measured), isMeasured: true)
         }
         guard let p60 = vm.state?.powder_per_60, p60 > 0 else { return nil }
         let grams = Double(ml) * p60 / 60.0
-        return (waterMl: ml, powderG: String(format: "%.1f", grams), isMeasured: false)
+        return (waterMl: "\(ml)", powderG: String(format: "%.1f", grams), isMeasured: false)
     }
 
     var body: some View {
@@ -689,6 +693,7 @@ struct LogRow: View {
                 leftover = entry.leftover
                 editDate = parsedDate ?? Date()
                 measuredGramsCache = BookooPairingStore.loadMeasuredGrams()[entry.sk]
+                measuredMlCache = BookooPairingStore.loadMeasuredMl()[entry.sk]
                 withAnimation(.spring(duration: 0.2)) { expanded.toggle() }
             }
 
