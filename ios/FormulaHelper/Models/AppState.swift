@@ -25,8 +25,14 @@ struct LogEntry: Codable, Identifiable {
     let ml: Int
     let date: String
     let created_by: String
+    /// Bookoo auto-log metadata (server-side, so it's visible on every device).
+    var source: String?            // "bookoo" for scale auto-logs
+    var measured_grams: Double?    // real powder grams the scale read
+    var measured_ml: Double?       // unrounded water ml (logged ml is snapped to 10)
 
     var id: String { sk }
+
+    var isAutoLogged: Bool { source == "bookoo" }
 
     /// ml actually consumed (total minus leftover)
     var consumedMl: Int {

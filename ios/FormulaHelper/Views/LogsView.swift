@@ -153,6 +153,9 @@ struct LogsView: View {
                     .padding(.vertical, 16)
 
                     // ── Entry list ──
+                    // Server now marks autolog entries via `source`; the local
+                    // measured-grams map is a fallback for entries logged before
+                    // that shipped.
                     let autoLoggedSks = Set(BookooPairingStore.loadMeasuredGrams().keys)
                     switch tab {
                     case .formula:
@@ -161,7 +164,7 @@ struct LogsView: View {
                         } else {
                             List {
                                 ForEach(formulaEntries) { entry in
-                                    LogRow(entry: entry, vm: vm, expanded: binding(for: entry.sk), isAutoLogged: autoLoggedSks.contains(entry.sk))
+                                    LogRow(entry: entry, vm: vm, expanded: binding(for: entry.sk), isAutoLogged: entry.isAutoLogged || autoLoggedSks.contains(entry.sk))
                                         .listRowBackground(Color.clear)
                                         .listRowSeparator(.hidden)
                                         .listRowInsets(EdgeInsets(top: 3, leading: 0, bottom: 3, trailing: 0))
@@ -635,11 +638,15 @@ struct LogRow: View {
     var recipeBreakdown: (waterMl: String, powderG: String, isMeasured: Bool)? {
         let ml = Int(mlText.trimmingCharacters(in: .whitespaces)) ?? entry.ml
         guard ml > 0 else { return nil }
-        if let measured = measuredGramsCache {
+        // Prefer the server-stored measured values (visible on every device),
+        // then the local cache (entries logged before the server field shipped).
+        let measuredGrams = entry.measured_grams ?? measuredGramsCache
+        let measuredMl = entry.measured_ml ?? measuredMlCache
+        if let grams = measuredGrams {
             // Show the unrounded measured water ml when we have it (the logged
             // ml is snapped to 10); fall back to the rounded logged ml.
-            let waterStr = measuredMlCache.map { String(format: "%.1f", $0) } ?? "\(ml)"
-            return (waterMl: waterStr, powderG: String(format: "%.2f", measured), isMeasured: true)
+            let waterStr = measuredMl.map { String(format: "%.1f", $0) } ?? "\(ml)"
+            return (waterMl: waterStr, powderG: String(format: "%.2f", grams), isMeasured: true)
         }
         guard let p60 = vm.state?.powder_per_60, p60 > 0 else { return nil }
         let grams = Double(ml) * p60 / 60.0
@@ -663,9 +670,9 @@ struct LogRow: View {
                         }
                     }
                     if isAutoLogged {
-                        Text("autolog")
+                        Text(entry.created_by.isEmpty ? "autolog" : "\(entry.created_by) · autolog")
                             .font(.outfit(11))
-                            .foregroundColor(Color.tertiaryLabel)
+                            .foregroundColor(Color.green)
                     } else if !entry.created_by.isEmpty {
                         Text("\(entry.created_by)")
                             .font(.outfit(11))

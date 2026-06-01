@@ -63,8 +63,17 @@ actor APIClient {
 
     // MARK: - Feeding
 
-    func startFeeding(ml: Int) async throws -> OkResponse {
-        try await post("/api/start", body: ["ml": ml])
+    func startFeeding(
+        ml: Int,
+        source: String? = nil,
+        measuredGrams: Double? = nil,
+        measuredMl: Double? = nil
+    ) async throws -> OkResponse {
+        var body: [String: Any] = ["ml": ml]
+        if let source { body["source"] = source }
+        if let measuredGrams { body["measured_grams"] = measuredGrams }
+        if let measuredMl { body["measured_ml"] = measuredMl }
+        return try await post("/api/start", body: body)
     }
 
     func logEntry(ml: Int, date: String? = nil) async throws -> OkResponse {

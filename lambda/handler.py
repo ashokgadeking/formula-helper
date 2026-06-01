@@ -229,7 +229,7 @@ def _nap_entry_to_api(item):
 
 def _log_entry_to_api(item):
     """Convert DynamoDB log item to API response format."""
-    return {
+    out = {
         "sk": item["SK"],
         "text": item.get("text", ""),
         "leftover": item.get("leftover", ""),
@@ -237,6 +237,16 @@ def _log_entry_to_api(item):
         "date": item.get("date", ""),
         "created_by": item.get("created_by", ""),
     }
+    # Optional Bookoo auto-log metadata. Present only on entries created by the
+    # scale; lets every device show the "autolog" tag + the real measured
+    # water/powder instead of a formula-derived guess.
+    if item.get("source"):
+        out["source"] = item["source"]
+    if item.get("measured_grams") is not None:
+        out["measured_grams"] = float(item["measured_grams"])
+    if item.get("measured_ml") is not None:
+        out["measured_ml"] = float(item["measured_ml"])
+    return out
 
 
 def _send_ntfy(msg, title="Bottle Expired", mixed_at=""):
@@ -817,7 +827,7 @@ def post_start(event):
     date_str = now.strftime("%Y-%m-%d %I:%M %p")
     sk = now.strftime("%Y-%m-%d") + "#" + f"{time.time():.3f}"
 
-    table.put_item(Item={
+    item = {
         "PK": "LOG",
         "SK": sk,
         "text": f"{ml}ml @ {mixed_at_str}",
@@ -825,7 +835,17 @@ def post_start(event):
         "ml": ml,
         "date": date_str,
         "created_by": user_name,
-    })
+    }
+    # Optional Bookoo auto-log metadata so the entry renders consistently on
+    # every device (autolog tag + real measured water/powder).
+    if data.get("source"):
+        item["source"] = str(data["source"])
+    if data.get("measured_grams") is not None:
+        item["measured_grams"] = Decimal(str(data["measured_grams"]))
+    if data.get("measured_ml") is not None:
+        item["measured_ml"] = Decimal(str(data["measured_ml"]))
+
+    table.put_item(Item=item)
 
     _put_timer_state(countdown_end, mixed_at_str, ml, False)
 

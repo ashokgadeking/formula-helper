@@ -238,7 +238,14 @@ final class BookooManager: NSObject, ObservableObject {
             do {
                 // /api/start anchors the expiry timer AND creates the mix_log
                 // entry server-side. Calling /api/log here too would double-log.
-                let resp = try await APIClient.shared.startFeeding(ml: ml)
+                // Pass the Bookoo metadata so the entry renders as an autolog
+                // with real measured values on every device, not just this one.
+                let resp = try await APIClient.shared.startFeeding(
+                    ml: ml,
+                    source: "bookoo",
+                    measuredGrams: measuredGrams,
+                    measuredMl: unroundedMl
+                )
                 if let sk = resp.sk {
                     BookooPairingStore.recordMeasured(sk: sk, grams: measuredGrams, ml: unroundedMl)
                 }
