@@ -210,6 +210,7 @@ final class BookooManager: NSObject, ObservableObject {
         switch p {
         case .ready: return "ready"
         case .tracking(let peak): return "tracking (peak \(String(format: "%.1f", peak))g)"
+        case .lifting(let trough, _): return "lifting (trough \(String(format: "%.1f", trough))g)"
         case .logged: return "logged · cooldown"
         }
     }

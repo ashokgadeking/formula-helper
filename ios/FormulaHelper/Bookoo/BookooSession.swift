@@ -16,13 +16,15 @@ import Foundation
 @MainActor
 final class BookooSession {
     enum Phase: Equatable {
-        case ready                        // peak <= 3, waiting for powder
-        case tracking(peak: Double)       // peak > 3, accumulating
-        case logged(at: Date)             // cooldown — ignore everything
+        case ready                                  // peak <= 3, waiting for powder
+        case tracking(peak: Double)                 // peak > 3, accumulating
+        case lifting(trough: Double, since: Date)   // bottle coming off, settling
+        case logged(at: Date)                       // cooldown — ignore everything
     }
 
     private let measureFloor: Double = 3.0    // peak grams needed before a log can fire
     private let liftThreshold: Double = -5.0  // weight below this = bottle lifted
+    private let liftSettleWindow: TimeInterval = 1.2  // collect the trough this long
     private let cooldown: TimeInterval = 60.0
     private let mlFloor = 30
     private let mlCeiling = 300
@@ -58,6 +60,20 @@ final class BookooSession {
             smoothedSeeded = false
         }
 
+        // Once a lift is underway, keep collecting the trough (most-negative
+        // reading) for a short window so we use the SETTLED -(bottle+water)
+        // value for calibration, not the transient first-negative sample caught
+        // mid-sweep. Fire once the window elapses.
+        if case .lifting(let trough, let since) = phase {
+            let newTrough = min(trough, w)
+            if now.timeIntervalSince(since) >= liftSettleWindow {
+                fireLog(addedGrams: peak, liftMagnitudeG: abs(newTrough), at: now)
+            } else {
+                phase = .lifting(trough: newTrough, since: since)
+            }
+            return
+        }
+
         // EMA smoothing damps single-sample mechanical spikes (scoop bump,
         // brief overshoot) before they latch onto the peak. Seed on first
         // reading so we don't ramp from 0.
@@ -75,37 +91,44 @@ final class BookooSession {
             phase = .tracking(peak: peak)
         }
 
-        // Lift detected — bottle off scale drives a sharp negative reading.
-        // Use the raw `w` (not smoothed) so the lift fires on the first
-        // negative sample rather than waiting for the EMA to chase it down.
+        // Lift onset — bottle off scale drives a sharp negative reading. Use
+        // the raw `w` (not smoothed) so it trips on the first negative sample.
+        // Enter the settling window rather than firing immediately.
         if w < liftThreshold && peak >= measureFloor {
-            fireLog(addedGrams: peak, liftMagnitudeG: abs(w), at: now)
+            phase = .lifting(trough: w, since: now)
         }
     }
 
     private func fireLog(addedGrams: Double, liftMagnitudeG: Double, at now: Date) {
-        let cached = CacheManager.shared.restore()
-        let powderPer60 = cached?.powder_per_60 ?? 8.3
-        // Global bottle calibration: if the user has captured a dry-bottle
-        // weight, compute water_ml = liftMagnitude − dry. That's a real
-        // measurement instead of the formula-derived guess. Shared across all
-        // scales since the user mixes in the same bottles.
+        let powderPer60 = CacheManager.shared.restore()?.powder_per_60 ?? 8.3
+
+        // Candidate 1 — global bottle calibration: water_ml = settled lift
+        // magnitude − dry bottle. A real measurement when it lands in range.
         let dry = BookooPairingStore.loadDryBottleWeight()
-        let waterMl: Double
-        if let dry, dry > 0, liftMagnitudeG > dry {
-            waterMl = liftMagnitudeG - dry
-        } else {
-            guard powderPer60 > 0 else {
-                phase = .logged(at: now); peak = 0
-                return
-            }
-            waterMl = addedGrams * 60.0 / powderPer60
+        let calibrated: Double? = {
+            guard let dry, dry > 0, liftMagnitudeG > dry else { return nil }
+            return liftMagnitudeG - dry
+        }()
+
+        // Candidate 2 — formula fallback from the powder peak. Always available
+        // and doesn't depend on the noisy lift magnitude.
+        let formula: Double? = powderPer60 > 0 ? addedGrams * 60.0 / powderPer60 : nil
+
+        // Prefer calibration, but only if it rounds in range; otherwise fall
+        // back to formula. Reset (no log) only if neither is usable.
+        func roundedInRange(_ ml: Double?) -> Int? {
+            guard let ml else { return nil }
+            let r = Int((ml / 10.0).rounded()) * 10
+            return (r >= mlFloor && r <= mlCeiling) ? r : nil
         }
-        let rounded = Int((waterMl / 10.0).rounded()) * 10
-        guard rounded >= mlFloor, rounded <= mlCeiling else {
+
+        guard let rounded = roundedInRange(calibrated) ?? roundedInRange(formula) else {
+            // Nothing usable — reset and wait for the next prep.
             phase = .logged(at: now); peak = 0
+            smoothedWeight = 0; smoothedSeeded = false
             return
         }
+
         phase = .logged(at: now)
         let measured = addedGrams
         peak = 0
