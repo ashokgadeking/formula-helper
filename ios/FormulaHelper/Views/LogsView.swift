@@ -607,6 +607,20 @@ struct LogRow: View {
     /// SwiftUI re-render of an expanded row.
     @State private var measuredGramsCache: Double?
     @State private var measuredMlCache: Double?
+    @State private var waterText = ""
+    @State private var powderText = ""
+
+    /// True for Bookoo/measured entries — exposes editable water + powder fields.
+    private var isMeasuredEntry: Bool {
+        entry.isAutoLogged || entry.measured_grams != nil || measuredGramsCache != nil
+    }
+
+    /// Live variance from the edit fields while correcting a measured entry.
+    private var liveMeasuredVariance: Double? {
+        guard let p60 = vm.state?.powder_per_60, p60 > 0,
+              let w = Double(waterText), let g = Double(powderText) else { return nil }
+        return g - w * p60 / 60.0
+    }
 
     private static let parseFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -663,6 +677,62 @@ struct LogRow: View {
         return (String(format: "%@%.1fg", sign, abs(g)), g > 0 ? Color.orange : Color.blue)
     }
 
+    private func editField(_ placeholder: String, text: Binding<String>, decimal: Bool) -> some View {
+        TextField(placeholder, text: text)
+            .keyboardType(decimal ? .decimalPad : .numberPad)
+            .font(.outfit(14)).foregroundColor(Color.primaryLabel)
+            .padding(.horizontal, 14)
+            .frame(maxWidth: .infinity, minHeight: 44, maxHeight: 44)
+            .background(Color.primaryBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.opaqueSeparator, lineWidth: 1))
+    }
+
+    private var saveButton: some View {
+        Button(saving ? "…" : "Save") { saveEdits() }
+            .font(.outfit(14, weight: .semibold)).foregroundColor(Color.green)
+            .padding(.horizontal, 16).padding(.vertical, 12)
+            .background(Color.greenFill)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.greenBorder, lineWidth: 1))
+            .disabled(saving)
+    }
+
+    private func saveEdits() {
+        guard !saving else { return }
+        Haptics.tap(.medium)
+        saving = true
+        let dateStr = LogRow.parseFormatter.string(from: editDate)
+        let f = DateFormatter(); f.dateFormat = "hh:mm a"; f.locale = Locale(identifier: "en_US_POSIX")
+        let timeOnly = f.string(from: editDate)
+        let leftoverDigits = leftover.filter(\.isNumber)
+
+        if isMeasuredEntry {
+            let water = Double(waterText.trimmingCharacters(in: .whitespaces)) ?? entry.measured_ml ?? Double(entry.ml)
+            let powder = Double(powderText.trimmingCharacters(in: .whitespaces)) ?? entry.measured_grams
+            let newMl = Int(water.rounded())
+            let newText = "\(newMl)ml @ \(timeOnly)"
+            Task {
+                try? await APIClient.shared.updateEntry(
+                    sk: entry.sk, text: newText, leftover: leftoverDigits,
+                    ml: newMl, date: dateStr, measuredGrams: powder, measuredMl: water
+                )
+                // Keep the local cache in sync for immediate display on this device.
+                if let powder { BookooPairingStore.recordMeasured(sk: entry.sk, grams: powder, ml: water) }
+                await vm.refresh(); saving = false; expanded = false
+            }
+        } else {
+            let newMl = Int(mlText.trimmingCharacters(in: .whitespaces)) ?? entry.ml
+            let newText = "\(newMl)ml @ \(timeOnly)"
+            Task {
+                try? await APIClient.shared.updateEntry(
+                    sk: entry.sk, text: newText, leftover: leftoverDigits, ml: newMl, date: dateStr
+                )
+                await vm.refresh(); saving = false; expanded = false
+            }
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
@@ -711,6 +781,10 @@ struct LogRow: View {
                 editDate = parsedDate ?? Date()
                 measuredGramsCache = BookooPairingStore.loadMeasuredGrams()[entry.sk]
                 measuredMlCache = BookooPairingStore.loadMeasuredMl()[entry.sk]
+                let g = entry.measured_grams ?? measuredGramsCache
+                let w = entry.measured_ml ?? measuredMlCache ?? Double(entry.ml)
+                powderText = g.map { String(format: "%.1f", $0) } ?? ""
+                waterText = String(format: "%.0f", w)
                 withAnimation(.spring(duration: 0.2)) { expanded.toggle() }
             }
 
@@ -723,78 +797,40 @@ struct LogRow: View {
                         Spacer()
                     }
 
-                    if let recipe = recipeBreakdown {
-                        HStack(spacing: 6) {
-                            if recipe.isMeasured {
+                    if isMeasuredEntry {
+                        // Editable measured recipe: water + powder, with live variance.
+                        HStack(spacing: 8) {
+                            editField("Water (ml)", text: $waterText, decimal: true)
+                            editField("Powder (g)", text: $powderText, decimal: true)
+                        }
+                        if let v = liveMeasuredVariance {
+                            let label = varianceLabel(v)
+                            HStack(spacing: 4) {
                                 Image(systemName: "scalemass.fill")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(.orange)
-                            }
-                            Text("\(recipe.waterMl) ml water · \(recipe.powderG) g powder")
-                                .font(.outfit(13))
-                                .foregroundColor(Color.secondaryLabel)
-                            if recipe.isMeasured {
-                                Text("· measured")
-                                    .font(.outfit(11))
-                                    .foregroundColor(Color.tertiaryLabel)
-                            }
-                            if let v = recipe.varianceG {
-                                let label = varianceLabel(v)
-                                Text("· \(label.text)")
-                                    .font(.outfit(11))
-                                    .foregroundColor(label.color)
-                            }
-                            Spacer()
-                        }
-                    }
-
-                    HStack(spacing: 8) {
-                        TextField("ml", text: $mlText)
-                            .keyboardType(.numberPad).font(.outfit(14)).foregroundColor(Color.primaryLabel)
-                            .padding(.horizontal, 14)
-                            .frame(maxWidth: .infinity, minHeight: 44, maxHeight: 44)
-                            .background(Color.primaryBackground)
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
-                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.opaqueSeparator, lineWidth: 1))
-
-                        TextField("Leftover", text: $leftover)
-                            .keyboardType(.numberPad).font(.outfit(14)).foregroundColor(Color.primaryLabel)
-                            .padding(.horizontal, 14)
-                            .frame(maxWidth: .infinity, minHeight: 44, maxHeight: 44)
-                            .background(Color.primaryBackground)
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
-                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.opaqueSeparator, lineWidth: 1))
-
-                        Button(saving ? "…" : "Save") {
-                            guard !saving else { return }
-                            Haptics.tap(.medium)
-                            saving = true
-                            let newMl = Int(mlText.trimmingCharacters(in: .whitespaces)) ?? entry.ml
-                            let dateStr = LogRow.parseFormatter.string(from: editDate)
-                            let timeOnly: String = {
-                                let f = DateFormatter()
-                                f.dateFormat = "hh:mm a"
-                                f.locale = Locale(identifier: "en_US_POSIX")
-                                return f.string(from: editDate)
-                            }()
-                            let newText = "\(newMl)ml @ \(timeOnly)"
-                            Task {
-                                try? await APIClient.shared.updateEntry(
-                                    sk: entry.sk,
-                                    text: newText,
-                                    leftover: leftover.filter(\.isNumber),
-                                    ml: newMl,
-                                    date: dateStr
-                                )
-                                await vm.refresh(); saving = false; expanded = false
+                                    .font(.system(size: 10)).foregroundColor(.orange)
+                                Text("variance \(label.text)")
+                                    .font(.outfit(11)).foregroundColor(label.color)
+                                Spacer()
                             }
                         }
-                        .font(.outfit(14, weight: .semibold)).foregroundColor(Color.green)
-                        .padding(.horizontal, 16).padding(.vertical, 12)
-                        .background(Color.greenFill)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.greenBorder, lineWidth: 1))
-                        .disabled(saving)
+                        HStack(spacing: 8) {
+                            editField("Leftover", text: $leftover, decimal: false)
+                            saveButton
+                        }
+                    } else {
+                        if let recipe = recipeBreakdown {
+                            HStack(spacing: 6) {
+                                Text("\(recipe.waterMl) ml water · \(recipe.powderG) g powder")
+                                    .font(.outfit(13))
+                                    .foregroundColor(Color.secondaryLabel)
+                                Spacer()
+                            }
+                        }
+                        HStack(spacing: 8) {
+                            editField("ml", text: $mlText, decimal: false)
+                            editField("Leftover", text: $leftover, decimal: false)
+                            saveButton
+                        }
                     }
                 }
                 .padding(.horizontal, 14).padding(.vertical, 10).background(Color.overlayBackground)

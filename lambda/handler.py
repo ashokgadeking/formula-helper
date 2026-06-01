@@ -919,6 +919,12 @@ def put_log(event):
     if "date" in data:
         update_expr_parts.append("#d = :date")
         expr_values[":date"] = data["date"]
+    if "measured_grams" in data:
+        update_expr_parts.append("measured_grams = :mg")
+        expr_values[":mg"] = Decimal(str(data["measured_grams"]))
+    if "measured_ml" in data:
+        update_expr_parts.append("measured_ml = :mml")
+        expr_values[":mml"] = Decimal(str(data["measured_ml"]))
 
     if not update_expr_parts:
         return _json_response({"ok": False, "error": "nothing to update"}, 400)

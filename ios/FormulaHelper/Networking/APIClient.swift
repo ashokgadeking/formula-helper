@@ -82,12 +82,22 @@ actor APIClient {
         return try await post("/api/log", body: body)
     }
 
-    func updateEntry(sk: String, text: String? = nil, leftover: String? = nil, ml: Int? = nil, date: String? = nil) async throws {
+    func updateEntry(
+        sk: String,
+        text: String? = nil,
+        leftover: String? = nil,
+        ml: Int? = nil,
+        date: String? = nil,
+        measuredGrams: Double? = nil,
+        measuredMl: Double? = nil
+    ) async throws {
         var body: [String: Any] = [:]
         if let text { body["text"] = text }
         if let leftover { body["leftover"] = leftover }
         if let ml { body["ml"] = ml }
         if let date { body["date"] = date }
+        if let measuredGrams { body["measured_grams"] = measuredGrams }
+        if let measuredMl { body["measured_ml"] = measuredMl }
         let encoded = encodePathComponent(sk)
         let _: OkResponse = try await put("/api/log/\(encoded)", body: body)
     }
