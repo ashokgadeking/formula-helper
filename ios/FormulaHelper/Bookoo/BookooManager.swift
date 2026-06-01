@@ -54,6 +54,10 @@ final class BookooManager: NSObject, ObservableObject {
         var maxMagnitudeEver: Double
         var lastSignByte: UInt8
         var lastRawHex: String
+        /// Powder = the session's tracked peak grams. Water = |negative reading|
+        /// − dry bottle when the bottle is lifted and a calibration exists.
+        var powderPeakG: Double
+        var liveWaterG: Double?
     }
 
     struct DiscoveredScale: Identifiable, Equatable {
@@ -195,6 +199,15 @@ final class BookooManager: NSObject, ObservableObject {
         }()
         session.ingest(r)
 
+        // Live water = how much liquid is in the bottle, revealed only when it's
+        // lifted off (the scale tared with bottle+water on it, so the empty pan
+        // reads −(bottle+water)). |reading| − dry bottle = water.
+        let dry = BookooPairingStore.loadDryBottleWeight()
+        let liveWater: Double? = {
+            guard let dry, dry > 0, r.weightG < -2 else { return nil }
+            return max(0, abs(r.weightG) - dry)
+        }()
+
         let prev = debugInfo[id]
         debugInfo[id] = DebugRow(
             weightG: r.weightG,
@@ -204,7 +217,9 @@ final class BookooManager: NSObject, ObservableObject {
             maxWeightEver: max(prev?.maxWeightEver ?? -Double.infinity, r.weightG),
             maxMagnitudeEver: max(prev?.maxMagnitudeEver ?? 0, magnitude),
             lastSignByte: signByte,
-            lastRawHex: hex
+            lastRawHex: hex,
+            powderPeakG: session.peak,
+            liveWaterG: liveWater
         )
     }
 

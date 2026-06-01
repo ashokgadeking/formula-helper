@@ -157,6 +157,15 @@ struct BookooPairingView: View {
                 }
                 .appFont(.footnote)
                 .foregroundColor(connected ? Color.green : Color.secondaryLabel)
+
+                if connected, let dbg = manager.debugInfo[scale.id] {
+                    HStack(spacing: 10) {
+                        Text("Powder \(String(format: "%.1f", dbg.powderPeakG))g")
+                        Text("Water \(dbg.liveWaterG.map { String(format: "%.1f", $0) + "g" } ?? "—")")
+                    }
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.blue)
+                }
             }
             Spacer()
             Image(systemName: "pencil")
