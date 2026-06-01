@@ -7,6 +7,12 @@ private struct UnsafePeripheralBox: @unchecked Sendable {
     init(_ v: [CBPeripheral]) { self.values = v }
 }
 
+extension Notification.Name {
+    /// Posted after a Bookoo auto-log lands on the server, so the dashboard /
+    /// logs refresh immediately instead of waiting for the 30s poll.
+    static let bookooDidLog = Notification.Name("bookooDidLog")
+}
+
 /// Coordinates BLE for all paired Bookoo scales. Survives app termination via
 /// CBCentralManager state restoration so the overnight auto-log workflow
 /// triggers without any phone interaction.
@@ -251,6 +257,9 @@ final class BookooManager: NSObject, ObservableObject {
                 }
                 sendBeep(peripheralID: peripheralID)
                 postLogNotification(ml: ml, scaleName: scaleName)
+                // Nudge any live view model to refresh so the new entry shows
+                // immediately instead of on the next 30s poll.
+                NotificationCenter.default.post(name: .bookooDidLog, object: nil)
                 await flushPendingLogs()
             } catch APIError.badStatus(401, _) {
                 postAuthRequiredNotification()

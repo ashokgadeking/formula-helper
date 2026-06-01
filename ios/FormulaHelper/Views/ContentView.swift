@@ -51,11 +51,25 @@ final class StateViewModel: ObservableObject {
 
     private(set) var avgDayRatePerMl: Double?
     private(set) var avgNightRatePerMl: Double?
+    /// Today's cumulative powder deviation in grams across measured (Bookoo)
+    /// bottles: + = excess powder added, − = short. nil if no measured bottles
+    /// today. Recomputed on each state change.
+    @Published private(set) var todayPowderDeviationG: Double?
     private var pollTask: Task<Void, Never>?
+
+    init() {
+        // Refresh immediately when a Bookoo auto-log lands, rather than waiting
+        // for the next poll.
+        NotificationCenter.default.addObserver(
+            forName: .bookooDidLog, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in await self?.refresh() }
+        }
+    }
 
     func load() async {
         if let cached = CacheManager.shared.restore(), state == nil {
-            state = cached; computeRates()
+            state = cached; computeRates(); computeDeviation()
         }
         await refresh()
         startPolling()
@@ -64,7 +78,7 @@ final class StateViewModel: ObservableObject {
     func refresh() async {
         do {
             let fresh = try await APIClient.shared.getState()
-            state = fresh; CacheManager.shared.save(fresh); computeRates(); errorMessage = nil
+            state = fresh; CacheManager.shared.save(fresh); computeRates(); computeDeviation(); errorMessage = nil
             WidgetCenter.shared.reloadAllTimelines()
             syncNotification()
         } catch { if state == nil { errorMessage = error.localizedDescription } }
@@ -276,6 +290,35 @@ final class StateViewModel: ObservableObject {
         avgNightRatePerMl = night.isEmpty ? nil : night.reduce(0,+) / Double(night.count)
     }
 
+    /// Sum today's powder deviation: for each measured (Bookoo) bottle,
+    /// actual powder − expected powder for its water. Expected uses the measured
+    /// water ml when available, else the logged ml. Manual / non-measured
+    /// bottles are skipped (we can't know the actual powder they used).
+    private func computeDeviation() {
+        guard let entries = state?.mix_log, let p60 = state?.powder_per_60, p60 > 0 else {
+            todayPowderDeviationG = nil
+            return
+        }
+        let startOfDay = Calendar.current.startOfDay(for: Date())
+        let localGrams = BookooPairingStore.loadMeasuredGrams()
+        let localMl = BookooPairingStore.loadMeasuredMl()
+        var total = 0.0
+        var counted = 0
+        for e in entries {
+            guard let d = parseDate(e.date), d >= startOfDay else { continue }
+            guard let actual = e.measured_grams ?? localGrams[e.sk] else { continue }
+            let waterMl = e.measured_ml ?? localMl[e.sk] ?? Double(e.ml)
+            total += actual - (waterMl * p60 / 60.0)
+            counted += 1
+        }
+        #if DEBUG
+        // Simulator can't produce Bookoo logs, so seed a sample value to verify
+        // the dashboard line's placement/styling. Never compiled into Release.
+        if counted == 0 { todayPowderDeviationG = 1.4; return }
+        #endif
+        todayPowderDeviationG = counted > 0 ? total : nil
+    }
+
     func parseDate(_ s: String) -> Date? {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd hh:mm a"
@@ -446,7 +489,7 @@ private struct BannerContent: View {
                             .font(.custom("Outfit", size: 72, relativeTo: .largeTitle).bold())
                             .foregroundColor(Color.tertiaryLabel)
                     } else if isExpired {
-                        Text("Bottle expired — mixed at \(state.mixed_at_str)".uppercased())
+                        Text("\(state.mixed_ml)ml mixed at \(state.mixed_at_str)".uppercased())
                             .font(aboveTimerFont)
                             .tracking(1.5)
                             .foregroundColor(Color.red.opacity(0.7))
@@ -487,6 +530,18 @@ private struct BannerContent: View {
             }
             .padding(.vertical, 16)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            // Today's running powder deviation pinned to the base of the card.
+            if vm.state != nil, let dev = vm.todayPowderDeviationG {
+                VStack {
+                    Spacer()
+                    Text(deviationText(dev))
+                        .font(aboveTimerFont)
+                        .tracking(1.2)
+                        .foregroundColor(deviationColor(dev))
+                        .padding(.bottom, 12)
+                }
+            }
         }
     }
 
@@ -500,6 +555,18 @@ private struct BannerContent: View {
     private func formatTimer(_ secs: Double) -> String {
         let s = max(0, Int(secs))
         return String(format: "%d:%02d", s / 60, s % 60)
+    }
+
+    /// "RUNNING 1.4g EXCESS TODAY" / "RUNNING 2.3g SHORT TODAY" / "ON TARGET TODAY".
+    private func deviationText(_ g: Double) -> String {
+        if abs(g) < 0.05 { return "ON TARGET TODAY" }
+        let dir = g > 0 ? "EXCESS" : "SHORT"
+        return String(format: "RUNNING %.1fg %@ TODAY", abs(g), dir)
+    }
+
+    private func deviationColor(_ g: Double) -> Color {
+        if abs(g) < 0.05 { return Color.green }
+        return g > 0 ? Color.orange : Color.blue
     }
 }
 

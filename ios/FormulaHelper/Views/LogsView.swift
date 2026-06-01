@@ -635,7 +635,7 @@ struct LogRow: View {
     /// fall back to the formula-derived guess based on the household's
     /// powder_per_60 ratio. Uses the live `mlText` so it updates as the user
     /// edits.
-    var recipeBreakdown: (waterMl: String, powderG: String, isMeasured: Bool)? {
+    var recipeBreakdown: (waterMl: String, powderG: String, isMeasured: Bool, varianceG: Double?)? {
         let ml = Int(mlText.trimmingCharacters(in: .whitespaces)) ?? entry.ml
         guard ml > 0 else { return nil }
         // Prefer the server-stored measured values (visible on every device),
@@ -646,11 +646,21 @@ struct LogRow: View {
             // Show the unrounded measured water ml when we have it (the logged
             // ml is snapped to 10); fall back to the rounded logged ml.
             let waterStr = measuredMl.map { String(format: "%.1f", $0) } ?? "\(ml)"
-            return (waterMl: waterStr, powderG: String(format: "%.2f", grams), isMeasured: true)
+            // Variance = actual powder − expected powder for this bottle's water.
+            let waterValue = measuredMl ?? Double(ml)
+            let variance = (vm.state?.powder_per_60).map { grams - waterValue * $0 / 60.0 }
+            return (waterMl: waterStr, powderG: String(format: "%.1f", grams), isMeasured: true, varianceG: variance)
         }
         guard let p60 = vm.state?.powder_per_60, p60 > 0 else { return nil }
         let grams = Double(ml) * p60 / 60.0
-        return (waterMl: "\(ml)", powderG: String(format: "%.1f", grams), isMeasured: false)
+        return (waterMl: "\(ml)", powderG: String(format: "%.1f", grams), isMeasured: false, varianceG: nil)
+    }
+
+    /// "+0.6g" / "−0.3g" / "on target" with a direction tint.
+    private func varianceLabel(_ g: Double) -> (text: String, color: Color) {
+        if abs(g) < 0.05 { return ("on target", Color.green) }
+        let sign = g > 0 ? "+" : "−"
+        return (String(format: "%@%.1fg", sign, abs(g)), g > 0 ? Color.orange : Color.blue)
     }
 
     var body: some View {
@@ -727,6 +737,12 @@ struct LogRow: View {
                                 Text("· measured")
                                     .font(.outfit(11))
                                     .foregroundColor(Color.tertiaryLabel)
+                            }
+                            if let v = recipe.varianceG {
+                                let label = varianceLabel(v)
+                                Text("· \(label.text)")
+                                    .font(.outfit(11))
+                                    .foregroundColor(label.color)
                             }
                             Spacer()
                         }
