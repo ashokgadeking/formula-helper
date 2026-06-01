@@ -6,10 +6,6 @@ struct PairedScale: Codable, Identifiable, Equatable {
     var pairedAt: Date
     var lastSeenAt: Date?
     var lastBatteryPct: Int?
-    /// Grams reading of the empty, dry bottle the user typically mixes in.
-    /// When set, BookooSession derives water_ml directly from the lift
-    /// magnitude instead of guessing from the formula ratio.
-    var dryBottleWeight: Double?
 }
 
 /// Persists paired scale metadata to the shared App Group UserDefaults so the
@@ -19,9 +15,29 @@ enum BookooPairingStore {
     private static let groupID = "group.com.ashokteja.formulahelper"
     private static let key = "bookoo.paired_scales"
     private static let pendingKey = "bookoo.pending_logs"
+    private static let dryBottleKey = "bookoo.dry_bottle_weight"
 
     private static var defaults: UserDefaults? {
         UserDefaults(suiteName: groupID)
+    }
+
+    // MARK: - Dry bottle calibration (global, shared across all scales)
+
+    /// Grams reading of the empty, dry bottle the user mixes in. Common to all
+    /// paired scales — the user uses the same bottles regardless of which scale
+    /// they're standing at. When set, BookooSession derives water_ml directly
+    /// from the lift magnitude instead of guessing from the formula ratio.
+    static func loadDryBottleWeight() -> Double? {
+        guard let d = defaults, d.object(forKey: dryBottleKey) != nil else { return nil }
+        return d.double(forKey: dryBottleKey)
+    }
+
+    static func saveDryBottleWeight(_ grams: Double?) {
+        if let grams {
+            defaults?.set(grams, forKey: dryBottleKey)
+        } else {
+            defaults?.removeObject(forKey: dryBottleKey)
+        }
     }
 
     // MARK: - Paired scales

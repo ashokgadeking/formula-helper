@@ -5,7 +5,7 @@ struct BookooPairingView: View {
     @ObservedObject private var manager = BookooManager.shared
     @State private var renameID: UUID?
     @State private var renameDraft = ""
-    @State private var calibrateID: UUID?
+    @State private var showCalibration = false
 
     var body: some View {
         ZStack {
@@ -17,6 +17,7 @@ struct BookooPairingView: View {
                     discoverySection
                 }
                 actionsSection
+                calibrationSection
             }
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
@@ -38,15 +39,53 @@ struct BookooPairingView: View {
             }
             Button("Cancel", role: .cancel) { renameID = nil }
         }
-        .sheet(isPresented: Binding(
-            get: { calibrateID != nil },
-            set: { if !$0 { calibrateID = nil } }
-        )) {
-            if let id = calibrateID,
-               let scale = manager.pairedScales.first(where: { $0.id == id })
-            {
-                BookooCalibrationSheet(scale: scale)
+        .sheet(isPresented: $showCalibration) {
+            BookooCalibrationSheet()
+        }
+    }
+
+    // MARK: - Calibration (global, shared across scales)
+
+    @ViewBuilder
+    private var calibrationSection: some View {
+        Section {
+            Button {
+                showCalibration = true
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: manager.dryBottleWeight != nil ? "checkmark.circle.fill" : "circle.dashed")
+                        .font(.system(size: 18))
+                        .foregroundColor(manager.dryBottleWeight != nil ? .green : .orange)
+                        .frame(width: 28)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Bottle calibration")
+                            .appFont(.body)
+                            .foregroundColor(Color.primaryLabel)
+                        if let dry = manager.dryBottleWeight {
+                            Text("Empty bottle: \(String(format: "%.1f", dry)) g")
+                                .appFont(.footnote)
+                                .foregroundColor(Color.secondaryLabel)
+                        } else {
+                            Text("Not calibrated — using formula ratio")
+                                .appFont(.footnote)
+                                .foregroundColor(Color.secondaryLabel)
+                        }
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(Color.tertiaryLabel)
+                }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .listRowBackground(Color.elevatedBackground)
+        } header: {
+            Text("Calibration").foregroundColor(Color.secondaryLabel)
+        } footer: {
+            Text("One empty-bottle weight used for every scale. When set, water volume is measured directly from the scale instead of derived from the formula ratio.")
+                .appFont(.footnote)
+                .foregroundColor(Color.secondaryLabel)
         }
     }
 
@@ -115,22 +154,6 @@ struct BookooPairingView: View {
                         .appFont(.footnote)
                         .foregroundColor(Color.secondaryLabel)
                 }
-                Button {
-                    calibrateID = scale.id
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: scale.dryBottleWeight != nil ? "checkmark.circle.fill" : "circle.dashed")
-                            .font(.system(size: 10))
-                        if let dry = scale.dryBottleWeight {
-                            Text("Bottle: \(String(format: "%.1f", dry))g · recalibrate")
-                        } else {
-                            Text("Calibrate dry bottle")
-                        }
-                    }
-                    .appFont(.footnote)
-                    .foregroundColor(scale.dryBottleWeight != nil ? .green : .orange)
-                }
-                .buttonStyle(.plain)
                 if let dbg = manager.debugInfo[scale.id] {
                     let snippet = debugSnippet(dbg)
                     VStack(alignment: .leading, spacing: 1) {
@@ -241,22 +264,21 @@ struct BookooPairingView: View {
 // MARK: - Calibration sheet
 
 struct BookooCalibrationSheet: View {
-    let scale: PairedScale
     @ObservedObject private var manager = BookooManager.shared
     @Environment(\.dismiss) private var dismiss
 
-    private var liveWeight: Double? { manager.debugInfo[scale.id]?.weightG }
+    private var liveWeight: Double? { manager.liveWeightAnyScale }
 
     var body: some View {
         NavigationStack {
             ZStack {
                 Color.primaryBackground.ignoresSafeArea()
                 VStack(spacing: 20) {
-                    Text("Calibrate \(scale.name)")
+                    Text("Bottle calibration")
                         .appFont(.title3)
                         .foregroundColor(Color.primaryLabel)
 
-                    Text("Power on the scale empty (it tares to 0). Then place your empty, dry bottle on it and tap Capture.")
+                    Text("Power on a scale empty (it tares to 0). Then place your empty, dry bottle on it and tap Capture. This one weight is used for every scale.")
                         .appFont(.body)
                         .foregroundColor(Color.secondaryLabel)
                         .multilineTextAlignment(.center)
@@ -283,7 +305,7 @@ struct BookooCalibrationSheet: View {
                     .clipShape(RoundedRectangle(cornerRadius: 16))
                     .padding(.horizontal, 24)
 
-                    if let dry = scale.dryBottleWeight {
+                    if let dry = manager.dryBottleWeight {
                         Text("Currently saved: \(String(format: "%.1f", dry)) g")
                             .appFont(.footnote)
                             .foregroundColor(Color.secondaryLabel)
@@ -291,7 +313,7 @@ struct BookooCalibrationSheet: View {
 
                     HStack(spacing: 12) {
                         Button(role: .destructive) {
-                            manager.setDryBottleWeight(id: scale.id, grams: nil)
+                            manager.setDryBottleWeight(nil)
                             dismiss()
                         } label: {
                             Text("Clear")
@@ -302,7 +324,7 @@ struct BookooCalibrationSheet: View {
 
                         Button {
                             if let w = liveWeight, w > 0.5 {
-                                manager.setDryBottleWeight(id: scale.id, grams: w)
+                                manager.setDryBottleWeight(w)
                                 dismiss()
                             }
                         } label: {

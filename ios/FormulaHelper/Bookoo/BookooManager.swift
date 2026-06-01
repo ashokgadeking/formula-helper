@@ -36,6 +36,8 @@ final class BookooManager: NSObject, ObservableObject {
     @Published private(set) var discovered: [DiscoveredScale] = []
     @Published private(set) var isScanning = false
     @Published private(set) var bleAuthorized = true
+    /// Global dry-bottle calibration, shared across all scales.
+    @Published private(set) var dryBottleWeight: Double?
     /// Live debug per peripheral — last raw reading + session phase. Used by the
     /// pairing UI to confirm packets are arriving and the state machine is
     /// progressing as expected.
@@ -61,6 +63,7 @@ final class BookooManager: NSObject, ObservableObject {
     override init() {
         super.init()
         pairedScales = BookooPairingStore.load()
+        dryBottleWeight = BookooPairingStore.loadDryBottleWeight()
         // Must construct CBCentralManager early so iOS restores any in-flight
         // peripherals before the launch sequence completes — that's what makes
         // background auto-reconnect work.
@@ -122,10 +125,17 @@ final class BookooManager: NSObject, ObservableObject {
         BookooPairingStore.save(pairedScales)
     }
 
-    func setDryBottleWeight(id: UUID, grams: Double?) {
-        guard let i = pairedScales.firstIndex(where: { $0.id == id }) else { return }
-        pairedScales[i].dryBottleWeight = grams
-        BookooPairingStore.save(pairedScales)
+    /// Set (or clear) the global dry-bottle calibration shared by all scales.
+    func setDryBottleWeight(_ grams: Double?) {
+        dryBottleWeight = grams
+        BookooPairingStore.saveDryBottleWeight(grams)
+    }
+
+    /// Live weight from whichever scale most recently streamed a packet. Used
+    /// by the calibration sheet — the user places the empty bottle on whatever
+    /// scale is on, and we read it regardless of which one it is.
+    var liveWeightAnyScale: Double? {
+        debugInfo.values.max(by: { $0.updatedAt < $1.updatedAt })?.weightG
     }
 
     func unpair(id: UUID) {

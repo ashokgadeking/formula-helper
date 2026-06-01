@@ -86,10 +86,11 @@ final class BookooSession {
     private func fireLog(addedGrams: Double, liftMagnitudeG: Double, at now: Date) {
         let cached = CacheManager.shared.restore()
         let powderPer60 = cached?.powder_per_60 ?? 8.3
-        // Per-scale calibration: if the user has captured a dry-bottle weight
-        // for this peripheral, compute water_ml = liftMagnitude − dry. That's
-        // a real measurement instead of the formula-derived guess.
-        let dry = BookooPairingStore.load().first { $0.id == peripheralID }?.dryBottleWeight
+        // Global bottle calibration: if the user has captured a dry-bottle
+        // weight, compute water_ml = liftMagnitude − dry. That's a real
+        // measurement instead of the formula-derived guess. Shared across all
+        // scales since the user mixes in the same bottles.
+        let dry = BookooPairingStore.loadDryBottleWeight()
         let waterMl: Double
         if let dry, dry > 0, liftMagnitudeG > dry {
             waterMl = liftMagnitudeG - dry
