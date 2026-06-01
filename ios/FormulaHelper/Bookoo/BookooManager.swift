@@ -36,6 +36,21 @@ final class BookooManager: NSObject, ObservableObject {
     @Published private(set) var discovered: [DiscoveredScale] = []
     @Published private(set) var isScanning = false
     @Published private(set) var bleAuthorized = true
+    /// Live debug per peripheral — last raw reading + session phase. Used by the
+    /// pairing UI to confirm packets are arriving and the state machine is
+    /// progressing as expected.
+    @Published private(set) var debugInfo: [UUID: DebugRow] = [:]
+
+    struct DebugRow: Equatable {
+        var weightG: Double
+        var phase: String
+        var updatedAt: Date
+        var packetCount: Int
+        var maxWeightEver: Double
+        var maxMagnitudeEver: Double
+        var lastSignByte: UInt8
+        var lastRawHex: String
+    }
 
     struct DiscoveredScale: Identifiable, Equatable {
         let id: UUID
@@ -107,6 +122,12 @@ final class BookooManager: NSObject, ObservableObject {
         BookooPairingStore.save(pairedScales)
     }
 
+    func setDryBottleWeight(id: UUID, grams: Double?) {
+        guard let i = pairedScales.firstIndex(where: { $0.id == id }) else { return }
+        pairedScales[i].dryBottleWeight = grams
+        BookooPairingStore.save(pairedScales)
+    }
+
     func unpair(id: UUID) {
         if let p = peripherals[id] { central.cancelPeripheralConnection(p) }
         peripherals.removeValue(forKey: id)
@@ -123,7 +144,6 @@ final class BookooManager: NSObject, ObservableObject {
         var remaining: [BookooPairingStore.PendingLog] = []
         for p in pending {
             do {
-                _ = try await APIClient.shared.logEntry(ml: p.ml, date: nil)
                 _ = try await APIClient.shared.startFeeding(ml: p.ml)
             } catch {
                 remaining.append(p)
@@ -146,7 +166,7 @@ final class BookooManager: NSObject, ObservableObject {
         )
     }
 
-    private func handleReading(_ r: BookooReading, from id: UUID) {
+    private func handleReading(_ r: BookooReading, from id: UUID, magnitude: Double = 0, signByte: UInt8 = 0, hex: String = "") {
         BookooPairingStore.updateLastSeen(id: id, batteryPct: r.batteryPct)
         if let idx = pairedScales.firstIndex(where: { $0.id == id }) {
             pairedScales[idx].lastSeenAt = Date()
@@ -155,21 +175,45 @@ final class BookooManager: NSObject, ObservableObject {
 
         let session = sessions[id] ?? {
             let s = BookooSession(peripheralID: id)
-            s.onLog = { [weak self] ml, peripheralID in
-                self?.performLog(ml: ml, peripheralID: peripheralID)
+            s.onLog = { [weak self] ml, measuredGrams, _, peripheralID in
+                self?.performLog(ml: ml, measuredGrams: measuredGrams, peripheralID: peripheralID)
             }
             sessions[id] = s
             return s
         }()
         session.ingest(r)
+
+        let prev = debugInfo[id]
+        debugInfo[id] = DebugRow(
+            weightG: r.weightG,
+            phase: phaseDescription(session.phase),
+            updatedAt: Date(),
+            packetCount: (prev?.packetCount ?? 0) + 1,
+            maxWeightEver: max(prev?.maxWeightEver ?? -Double.infinity, r.weightG),
+            maxMagnitudeEver: max(prev?.maxMagnitudeEver ?? 0, magnitude),
+            lastSignByte: signByte,
+            lastRawHex: hex
+        )
     }
 
-    private func performLog(ml: Int, peripheralID: UUID) {
+    private func phaseDescription(_ p: BookooSession.Phase) -> String {
+        switch p {
+        case .ready: return "ready"
+        case .tracking(let peak): return "tracking (peak \(String(format: "%.1f", peak))g)"
+        case .logged: return "logged · cooldown"
+        }
+    }
+
+    private func performLog(ml: Int, measuredGrams: Double, peripheralID: UUID) {
         let scaleName = pairedScales.first { $0.id == peripheralID }?.name ?? "Bookoo"
         Task { @MainActor in
             do {
-                _ = try await APIClient.shared.logEntry(ml: ml, date: nil)
-                _ = try await APIClient.shared.startFeeding(ml: ml)
+                // /api/start anchors the expiry timer AND creates the mix_log
+                // entry server-side. Calling /api/log here too would double-log.
+                let resp = try await APIClient.shared.startFeeding(ml: ml)
+                if let sk = resp.sk {
+                    BookooPairingStore.recordMeasuredGrams(sk: sk, grams: measuredGrams)
+                }
                 sendBeep(peripheralID: peripheralID)
                 postLogNotification(ml: ml, scaleName: scaleName)
                 await flushPendingLogs()
@@ -188,9 +232,11 @@ final class BookooManager: NSObject, ObservableObject {
         guard let p = peripherals[peripheralID],
               let c = commandChars[peripheralID]
         else { return }
-        // .withResponse is more reliable for short writes; the bookoo scale
-        // implements both. Failure is silent — the log already succeeded.
-        p.writeValue(BookooCommand.startTimer, for: c, type: .withResponse)
+        // CMD_TARE_AND_START is effective in every mode (start_timer alone only
+        // fires in timing/ratio mode) so it's the most reliable trigger for the
+        // scale's own audible tare cue. The bottle is already off the scale by
+        // the time this fires, so re-taring the empty pan is harmless.
+        p.writeValue(BookooCommand.tareAndStart, for: c, type: .withResponse)
     }
 
     private func postLogNotification(ml: Int, scaleName: String) {
@@ -359,8 +405,20 @@ extension BookooManager: CBPeripheralDelegate {
               let reading = BookooPacket.parse(data)
         else { return }
         let pid = peripheral.identifier
+        let signByte = data.count > 6 ? data[6] : 0
+        // Raw magnitude — sign-agnostic. Lets us tell whether the scale is
+        // actually emitting a non-zero weight when the parsed (signed) value
+        // looks pinned to 0.
+        let magnitude: Double = {
+            guard data.count >= 10 else { return 0 }
+            let raw = (Int(data[7]) << 16) | (Int(data[8]) << 8) | Int(data[9])
+            return Double(raw) / 100.0
+        }()
+        // Header bytes hex — first 10 bytes is enough to capture the sign +
+        // weight field.
+        let hex = data.prefix(10).map { String(format: "%02X", $0) }.joined(separator: " ")
         Task { @MainActor in
-            handleReading(reading, from: pid)
+            handleReading(reading, from: pid, magnitude: magnitude, signByte: signByte, hex: hex)
         }
     }
 }

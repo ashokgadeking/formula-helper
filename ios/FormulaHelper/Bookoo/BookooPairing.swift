@@ -6,6 +6,10 @@ struct PairedScale: Codable, Identifiable, Equatable {
     var pairedAt: Date
     var lastSeenAt: Date?
     var lastBatteryPct: Int?
+    /// Grams reading of the empty, dry bottle the user typically mixes in.
+    /// When set, BookooSession derives water_ml directly from the lift
+    /// magnitude instead of guessing from the formula ratio.
+    var dryBottleWeight: Double?
 }
 
 /// Persists paired scale metadata to the shared App Group UserDefaults so the
@@ -94,5 +98,34 @@ enum BookooPairingStore {
 
     static func clearPending() {
         defaults?.removeObject(forKey: pendingKey)
+    }
+
+    // MARK: - Measured grams per sk
+
+    /// When a Bookoo log fires, we know the exact peak grams the scale read,
+    /// even though the server only stores the rounded ml. Save the measured
+    /// value here keyed by the returned log sk so the edit panel can surface
+    /// it instead of recomputing from the formula ratio.
+    private static let measuredKey = "bookoo.measured_grams_by_sk"
+
+    static func loadMeasuredGrams() -> [String: Double] {
+        guard let data = defaults?.data(forKey: measuredKey),
+              let map = try? JSONDecoder().decode([String: Double].self, from: data)
+        else { return [:] }
+        return map
+    }
+
+    static func recordMeasuredGrams(sk: String, grams: Double) {
+        var map = loadMeasuredGrams()
+        map[sk] = grams
+        // Cap at 500 entries to keep the dict bounded. Oldest by iteration order
+        // when over cap — good enough since this is a UX hint, not a system of
+        // record.
+        if map.count > 500 {
+            map = Dictionary(uniqueKeysWithValues: map.suffix(500).map { ($0.key, $0.value) })
+        }
+        if let data = try? JSONEncoder().encode(map) {
+            defaults?.set(data, forKey: measuredKey)
+        }
     }
 }

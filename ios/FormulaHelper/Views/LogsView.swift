@@ -153,6 +153,7 @@ struct LogsView: View {
                     .padding(.vertical, 16)
 
                     // ── Entry list ──
+                    let autoLoggedSks = Set(BookooPairingStore.loadMeasuredGrams().keys)
                     switch tab {
                     case .formula:
                         if formulaEntries.isEmpty {
@@ -160,13 +161,21 @@ struct LogsView: View {
                         } else {
                             List {
                                 ForEach(formulaEntries) { entry in
-                                    LogRow(entry: entry, vm: vm, expanded: binding(for: entry.sk))
+                                    LogRow(entry: entry, vm: vm, expanded: binding(for: entry.sk), isAutoLogged: autoLoggedSks.contains(entry.sk))
                                         .listRowBackground(Color.clear)
                                         .listRowSeparator(.hidden)
                                         .listRowInsets(EdgeInsets(top: 3, leading: 0, bottom: 3, trailing: 0))
                                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                             Button(role: .destructive) {
-                                                Task { try? await APIClient.shared.deleteEntry(sk: entry.sk); await vm.refresh() }
+                                                let sk = entry.sk
+                                                if var s = vm.state {
+                                                    s.mix_log.removeAll { $0.sk == sk }
+                                                    vm.state = s
+                                                }
+                                                Task {
+                                                    try? await APIClient.shared.deleteEntry(sk: sk)
+                                                    await vm.refresh()
+                                                }
                                             } label: { Image(systemName: "trash.fill") }
                                             .tint(.red)
                                         }
@@ -188,7 +197,15 @@ struct LogsView: View {
                                         .listRowInsets(EdgeInsets(top: 3, leading: 0, bottom: 3, trailing: 0))
                                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                             Button(role: .destructive) {
-                                                Task { try? await APIClient.shared.deleteDiaper(sk: entry.sk); await vm.refresh() }
+                                                let sk = entry.sk
+                                                if var s = vm.state {
+                                                    s.diaper_log.removeAll { $0.sk == sk }
+                                                    vm.state = s
+                                                }
+                                                Task {
+                                                    try? await APIClient.shared.deleteDiaper(sk: sk)
+                                                    await vm.refresh()
+                                                }
                                             } label: { Image(systemName: "trash.fill") }
                                             .tint(.red)
                                         }
@@ -210,7 +227,16 @@ struct LogsView: View {
                                         .listRowInsets(EdgeInsets(top: 3, leading: 0, bottom: 3, trailing: 0))
                                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                             Button(role: .destructive) {
-                                                Task { try? await APIClient.shared.deleteNap(sk: entry.sk); await vm.refresh() }
+                                                let sk = entry.sk
+                                                if var s = vm.state, var naps = s.nap_log {
+                                                    naps.removeAll { $0.sk == sk }
+                                                    s.nap_log = naps
+                                                    vm.state = s
+                                                }
+                                                Task {
+                                                    try? await APIClient.shared.deleteNap(sk: sk)
+                                                    await vm.refresh()
+                                                }
                                             } label: { Image(systemName: "trash.fill") }
                                             .tint(.red)
                                         }
@@ -569,10 +595,14 @@ struct LogRow: View {
     let entry: LogEntry
     @ObservedObject var vm: StateViewModel
     @Binding var expanded: Bool
+    var isAutoLogged: Bool = false
     @State private var leftover = ""
     @State private var mlText = ""
     @State private var editDate = Date()
     @State private var saving   = false
+    /// Cached at long-press time so we don't churn UserDefaults on every
+    /// SwiftUI re-render of an expanded row.
+    @State private var measuredGramsCache: Double?
 
     private static let parseFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -595,6 +625,23 @@ struct LogRow: View {
         return digits.isEmpty ? nil : digits
     }
 
+    /// Decompose the bottle's ml into the water + powder recipe used to mix it.
+    /// If this entry was logged via a paired Bookoo scale, return the actual
+    /// peak grams the scale read (preserved client-side keyed by sk). Otherwise
+    /// fall back to the formula-derived guess based on the household's
+    /// powder_per_60 ratio. Uses the live `mlText` so it updates as the user
+    /// edits.
+    var recipeBreakdown: (waterMl: Int, powderG: String, isMeasured: Bool)? {
+        let ml = Int(mlText.trimmingCharacters(in: .whitespaces)) ?? entry.ml
+        guard ml > 0 else { return nil }
+        if let measured = measuredGramsCache {
+            return (waterMl: ml, powderG: String(format: "%.2f", measured), isMeasured: true)
+        }
+        guard let p60 = vm.state?.powder_per_60, p60 > 0 else { return nil }
+        let grams = Double(ml) * p60 / 60.0
+        return (waterMl: ml, powderG: String(format: "%.1f", grams), isMeasured: false)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
@@ -611,7 +658,11 @@ struct LogRow: View {
                                 .foregroundColor(Color.yellow)
                         }
                     }
-                    if !entry.created_by.isEmpty {
+                    if isAutoLogged {
+                        Text("autolog")
+                            .font(.outfit(11))
+                            .foregroundColor(Color.tertiaryLabel)
+                    } else if !entry.created_by.isEmpty {
                         Text("\(entry.created_by)")
                             .font(.outfit(11))
                             .foregroundColor(Color.tertiaryLabel)
@@ -637,6 +688,7 @@ struct LogRow: View {
                 mlText = String(entry.ml)
                 leftover = entry.leftover
                 editDate = parsedDate ?? Date()
+                measuredGramsCache = BookooPairingStore.loadMeasuredGrams()[entry.sk]
                 withAnimation(.spring(duration: 0.2)) { expanded.toggle() }
             }
 
@@ -647,6 +699,25 @@ struct LogRow: View {
                             .labelsHidden()
                             .environment(\.colorScheme, .dark)
                         Spacer()
+                    }
+
+                    if let recipe = recipeBreakdown {
+                        HStack(spacing: 6) {
+                            if recipe.isMeasured {
+                                Image(systemName: "scalemass.fill")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.orange)
+                            }
+                            Text("\(recipe.waterMl) ml water · \(recipe.powderG) g powder")
+                                .font(.outfit(13))
+                                .foregroundColor(Color.secondaryLabel)
+                            if recipe.isMeasured {
+                                Text("· measured")
+                                    .font(.outfit(11))
+                                    .foregroundColor(Color.tertiaryLabel)
+                            }
+                            Spacer()
+                        }
                     }
 
                     HStack(spacing: 8) {

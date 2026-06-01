@@ -34,11 +34,15 @@ enum BookooPacket {
         _ = xorChecksum(data, length: 19)
 
         let timerMs = (Int(data[2]) << 16) | (Int(data[3]) << 8) | Int(data[4])
-        let weightSign: Double = data[6] == 0 ? 1 : -1
+        // Bookoo Mini sign convention (verified 2026-05-31 on the user's scale):
+        // byte 6 is the ASCII char of the sign — '+' (0x2B) for non-negative,
+        // '-' (0x2D) for negative. The protocol doc's "0 = positive" wording
+        // was misleading; only '-' should flip the sign.
+        let weightSign: Double = data[6] == 0x2D ? -1 : 1
         let weightRaw = (Int(data[7]) << 16) | (Int(data[8]) << 8) | Int(data[9])
         let weightG = weightSign * Double(weightRaw) / 100.0
 
-        let flowSign: Double = data[10] == 0 ? 1 : -1
+        let flowSign: Double = data[10] == 0x2D ? -1 : 1
         let flowRaw = (Int(data[11]) << 8) | Int(data[12])
         let flowRate = flowSign * Double(flowRaw) / 100.0
 

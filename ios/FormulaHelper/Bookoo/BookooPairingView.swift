@@ -1,9 +1,11 @@
 import SwiftUI
+import UIKit
 
 struct BookooPairingView: View {
     @ObservedObject private var manager = BookooManager.shared
     @State private var renameID: UUID?
     @State private var renameDraft = ""
+    @State private var calibrateID: UUID?
 
     var body: some View {
         ZStack {
@@ -35,6 +37,16 @@ struct BookooPairingView: View {
                 renameID = nil
             }
             Button("Cancel", role: .cancel) { renameID = nil }
+        }
+        .sheet(isPresented: Binding(
+            get: { calibrateID != nil },
+            set: { if !$0 { calibrateID = nil } }
+        )) {
+            if let id = calibrateID,
+               let scale = manager.pairedScales.first(where: { $0.id == id })
+            {
+                BookooCalibrationSheet(scale: scale)
+            }
         }
     }
 
@@ -103,9 +115,59 @@ struct BookooPairingView: View {
                         .appFont(.footnote)
                         .foregroundColor(Color.secondaryLabel)
                 }
+                Button {
+                    calibrateID = scale.id
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: scale.dryBottleWeight != nil ? "checkmark.circle.fill" : "circle.dashed")
+                            .font(.system(size: 10))
+                        if let dry = scale.dryBottleWeight {
+                            Text("Bottle: \(String(format: "%.1f", dry))g · recalibrate")
+                        } else {
+                            Text("Calibrate dry bottle")
+                        }
+                    }
+                    .appFont(.footnote)
+                    .foregroundColor(scale.dryBottleWeight != nil ? .green : .orange)
+                }
+                .buttonStyle(.plain)
+                if let dbg = manager.debugInfo[scale.id] {
+                    let snippet = debugSnippet(dbg)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Live: \(String(format: "%.1f", dbg.weightG))g · \(dbg.phase)")
+                        Text("Max signed: \(String(format: "%.1f", dbg.maxWeightEver))g")
+                        Text("Max |raw|: \(String(format: "%.1f", dbg.maxMagnitudeEver))g")
+                        Text("packets: \(dbg.packetCount) · b6=0x\(String(format: "%02X", dbg.lastSignByte))")
+                        Text(dbg.lastRawHex)
+                            .font(.system(size: 9, design: .monospaced))
+                        Button {
+                            UIPasteboard.general.string = snippet
+                        } label: {
+                            Label("Copy debug", systemImage: "doc.on.doc")
+                                .appFont(.footnote)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+                        .padding(.top, 2)
+                    }
+                    .appFont(.footnote)
+                    .foregroundColor(.blue)
+                    .monospacedDigit()
+                }
             }
             Spacer()
         }
+    }
+
+    private func debugSnippet(_ dbg: BookooManager.DebugRow) -> String {
+        """
+        Live: \(String(format: "%.2f", dbg.weightG))g · \(dbg.phase)
+        Max signed: \(String(format: "%.2f", dbg.maxWeightEver))g
+        Max |raw|:  \(String(format: "%.2f", dbg.maxMagnitudeEver))g
+        packets: \(dbg.packetCount)
+        b6=0x\(String(format: "%02X", dbg.lastSignByte))
+        hex: \(dbg.lastRawHex)
+        """
     }
 
     // MARK: - Discovery
@@ -172,6 +234,97 @@ struct BookooPairingView: View {
                 .contentShape(Rectangle())
             }
             .listRowBackground(Color.elevatedBackground)
+        }
+    }
+}
+
+// MARK: - Calibration sheet
+
+struct BookooCalibrationSheet: View {
+    let scale: PairedScale
+    @ObservedObject private var manager = BookooManager.shared
+    @Environment(\.dismiss) private var dismiss
+
+    private var liveWeight: Double? { manager.debugInfo[scale.id]?.weightG }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color.primaryBackground.ignoresSafeArea()
+                VStack(spacing: 20) {
+                    Text("Calibrate \(scale.name)")
+                        .appFont(.title3)
+                        .foregroundColor(Color.primaryLabel)
+
+                    Text("Power on the scale empty (it tares to 0). Then place your empty, dry bottle on it and tap Capture.")
+                        .appFont(.body)
+                        .foregroundColor(Color.secondaryLabel)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 12)
+
+                    VStack(spacing: 6) {
+                        Text("Live reading")
+                            .appFont(.footnote)
+                            .foregroundColor(Color.tertiaryLabel)
+                        if let w = liveWeight {
+                            Text("\(String(format: "%.1f", w)) g")
+                                .font(.outfit(48, weight: .bold))
+                                .foregroundColor(Color.green)
+                                .monospacedDigit()
+                        } else {
+                            Text("—")
+                                .font(.outfit(48, weight: .bold))
+                                .foregroundColor(Color.tertiaryLabel)
+                        }
+                    }
+                    .padding(.vertical, 16)
+                    .frame(maxWidth: .infinity)
+                    .background(Color.elevatedBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .padding(.horizontal, 24)
+
+                    if let dry = scale.dryBottleWeight {
+                        Text("Currently saved: \(String(format: "%.1f", dry)) g")
+                            .appFont(.footnote)
+                            .foregroundColor(Color.secondaryLabel)
+                    }
+
+                    HStack(spacing: 12) {
+                        Button(role: .destructive) {
+                            manager.setDryBottleWeight(id: scale.id, grams: nil)
+                            dismiss()
+                        } label: {
+                            Text("Clear")
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                        }
+                        .buttonStyle(.bordered)
+
+                        Button {
+                            if let w = liveWeight, w > 0.5 {
+                                manager.setDryBottleWeight(id: scale.id, grams: w)
+                                dismiss()
+                            }
+                        } label: {
+                            Text("Capture")
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled((liveWeight ?? 0) <= 0.5)
+                    }
+                    .padding(.horizontal, 24)
+
+                    Spacer()
+                }
+                .padding(.top, 24)
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
         }
     }
 }

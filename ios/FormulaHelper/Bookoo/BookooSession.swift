@@ -1,40 +1,44 @@
 import Foundation
 
-/// Per-scale state machine that consumes weight readings and emits a single
-/// "log this bottle" decision when the user's mixing workflow completes.
+/// Per-scale tracker that consumes weight readings and emits a "log this bottle"
+/// decision when the user's mixing workflow completes.
 ///
-/// Workflow detected: scale powers on with bottle+water → auto-tares to 0g →
-/// user pours powder → weight settles at a stable peak → user lifts bottle →
-/// weight drops sharply → we log.
+/// Assumption (verified with the user 2026-05-31): the scale auto-tares to 0 g
+/// every time it's powered on with the bottle + water already sitting on it,
+/// so we don't need a dynamic baseline — the formula grams added equal the
+/// peak weight ever seen during this session.
+///
+/// Workflow:
+///   - scale powers on → BLE starts streaming ≈ 0 g
+///   - user pours powder → weight climbs to ≈ 16 g (for a 120 ml bottle)
+///   - user lifts bottle → weight drops well below 0 g (tare-negative)
+///   → we log peak × 60 / powder_per_60 ml
 @MainActor
 final class BookooSession {
     enum Phase: Equatable {
-        case idle
-        case tared(since: Date)
-        case measuring(peak: Double)
-        case stable(peak: Double, since: Date)
-        case logged(at: Date)
+        case ready                        // peak <= 3, waiting for powder
+        case tracking(peak: Double)       // peak > 3, accumulating
+        case logged(at: Date)             // cooldown — ignore everything
     }
 
-    // Thresholds — hardcoded for v1, tune from real usage per Open Question 4
-    // in the story.
-    private let tareEpsilon: Double = 0.5     // |g| <= this → "tared"
-    private let tareDwell: TimeInterval = 0.5 // must hold tare this long
-    private let measureFloor: Double = 3.0    // grams to enter measuring
-    private let stableEpsilon: Double = 0.2   // peak ± this for "stable"
-    private let stableDwell: TimeInterval = 2.0
-    private let liftDropFraction: Double = 0.5
-    private let liftMinGrams: Double = 1.0    // post-lift weight must be < this
-    private let idleTimeout: TimeInterval = 90.0
+    private let measureFloor: Double = 3.0    // peak grams needed before a log can fire
+    private let liftThreshold: Double = -5.0  // weight below this = bottle lifted
     private let cooldown: TimeInterval = 60.0
     private let mlFloor = 30
     private let mlCeiling = 300
+    // EMA weight on the incoming sample. α = 0.35 cleans up single-sample
+    // mechanical spikes (scoop hitting the bottle, transient overshoot) while
+    // keeping the response fast enough that a real pour still tracks within a
+    // few samples and the lift detection trips on the first negative reading.
+    private let smoothingAlpha: Double = 0.35
 
     let peripheralID: UUID
-    private(set) var phase: Phase = .idle
-    private var lastTransitionAt: Date = Date()
-    /// onLog is called on the main actor when a valid lift is detected.
-    var onLog: ((_ ml: Int, _ peripheralID: UUID) -> Void)?
+    private(set) var phase: Phase = .ready
+    private(set) var peak: Double = 0
+    private var smoothedWeight: Double = 0
+    private var smoothedSeeded = false
+
+    var onLog: ((_ ml: Int, _ measuredGrams: Double, _ liftMagnitudeG: Double, _ peripheralID: UUID) -> Void)?
 
     init(peripheralID: UUID) {
         self.peripheralID = peripheralID
@@ -42,87 +46,70 @@ final class BookooSession {
 
     func ingest(_ reading: BookooReading) {
         let now = Date()
-        defer { trimIdle(now: now) }
+        let w = reading.weightG
 
-        switch phase {
-        case .idle:
-            if abs(reading.weightG) <= tareEpsilon {
-                transition(to: .tared(since: now), at: now)
-            }
+        // Cooldown: silently ignore readings for 60 s after a log, so the
+        // post-log "put the bottle back briefly" gesture doesn't re-trigger.
+        if case .logged(let at) = phase {
+            if now.timeIntervalSince(at) < cooldown { return }
+            phase = .ready
+            peak = 0
+            smoothedWeight = 0
+            smoothedSeeded = false
+        }
 
-        case .tared(let since):
-            if reading.weightG >= measureFloor {
-                transition(to: .measuring(peak: reading.weightG), at: now)
-            } else if abs(reading.weightG) > tareEpsilon * 4 {
-                // Drifted far from zero without crossing the measure floor —
-                // probably noise or bottle removed before powder added. Reset.
-                transition(to: .idle, at: now)
-            } else if now.timeIntervalSince(since) > idleTimeout {
-                transition(to: .idle, at: now)
-            }
+        // EMA smoothing damps single-sample mechanical spikes (scoop bump,
+        // brief overshoot) before they latch onto the peak. Seed on first
+        // reading so we don't ramp from 0.
+        if !smoothedSeeded {
+            smoothedWeight = w
+            smoothedSeeded = true
+        } else {
+            smoothedWeight = smoothingAlpha * w + (1 - smoothingAlpha) * smoothedWeight
+        }
+        let s = smoothedWeight
 
-        case .measuring(let peak):
-            if reading.weightG > peak {
-                phase = .measuring(peak: reading.weightG)
-                lastTransitionAt = now
-            } else if abs(reading.weightG - peak) <= stableEpsilon {
-                transition(to: .stable(peak: peak, since: now), at: now)
-            } else if reading.weightG < measureFloor {
-                // User removed everything before stabilising.
-                transition(to: .idle, at: now)
-            }
+        // Track max smoothed weight ever seen this session.
+        if s > peak { peak = s }
+        if peak >= measureFloor {
+            phase = .tracking(peak: peak)
+        }
 
-        case .stable(let peak, let since):
-            // Lift detected — single sharp drop. Fires the log.
-            if reading.weightG < peak * (1 - liftDropFraction) || reading.weightG < liftMinGrams {
-                fireLog(peak: peak, at: now)
-            } else if abs(reading.weightG - peak) <= stableEpsilon {
-                // Still stable — continue dwelling. (Keep `since` so an idle
-                // sweep eventually triggers if user just sat there.)
-                if now.timeIntervalSince(since) > idleTimeout {
-                    transition(to: .idle, at: now)
-                }
-            } else if reading.weightG > peak + stableEpsilon {
-                // User added more powder after stable — bump peak, drop back
-                // to .measuring so we re-stabilise.
-                transition(to: .measuring(peak: reading.weightG), at: now)
-            }
-
-        case .logged(let at):
-            if now.timeIntervalSince(at) > cooldown {
-                transition(to: .idle, at: now)
-            }
+        // Lift detected — bottle off scale drives a sharp negative reading.
+        // Use the raw `w` (not smoothed) so the lift fires on the first
+        // negative sample rather than waiting for the EMA to chase it down.
+        if w < liftThreshold && peak >= measureFloor {
+            fireLog(addedGrams: peak, liftMagnitudeG: abs(w), at: now)
         }
     }
 
-    // MARK: - Internals
-
-    private func transition(to next: Phase, at now: Date) {
-        phase = next
-        lastTransitionAt = now
-    }
-
-    private func trimIdle(now: Date) {
-        if case .idle = phase { return }
-        if case .logged = phase { return }
-        if now.timeIntervalSince(lastTransitionAt) > idleTimeout {
-            transition(to: .idle, at: now)
+    private func fireLog(addedGrams: Double, liftMagnitudeG: Double, at now: Date) {
+        let cached = CacheManager.shared.restore()
+        let powderPer60 = cached?.powder_per_60 ?? 8.3
+        // Per-scale calibration: if the user has captured a dry-bottle weight
+        // for this peripheral, compute water_ml = liftMagnitude − dry. That's
+        // a real measurement instead of the formula-derived guess.
+        let dry = BookooPairingStore.load().first { $0.id == peripheralID }?.dryBottleWeight
+        let waterMl: Double
+        if let dry, dry > 0, liftMagnitudeG > dry {
+            waterMl = liftMagnitudeG - dry
+        } else {
+            guard powderPer60 > 0 else {
+                phase = .logged(at: now); peak = 0
+                return
+            }
+            waterMl = addedGrams * 60.0 / powderPer60
         }
-    }
-
-    private func fireLog(peak: Double, at now: Date) {
-        let powderPer60 = CacheManager.shared.restore()?.powder_per_60 ?? 8.3
-        guard powderPer60 > 0 else {
-            transition(to: .idle, at: now)
-            return
-        }
-        let raw = peak * 60.0 / powderPer60
-        let rounded = Int((raw / 10.0).rounded()) * 10
+        let rounded = Int((waterMl / 10.0).rounded()) * 10
         guard rounded >= mlFloor, rounded <= mlCeiling else {
-            transition(to: .idle, at: now)
+            phase = .logged(at: now); peak = 0
             return
         }
-        transition(to: .logged(at: now), at: now)
-        onLog?(rounded, peripheralID)
+        phase = .logged(at: now)
+        let measured = addedGrams
+        peak = 0
+        smoothedWeight = 0
+        smoothedSeeded = false
+        onLog?(rounded, measured, liftMagnitudeG, peripheralID)
     }
 }
