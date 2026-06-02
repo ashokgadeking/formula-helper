@@ -224,7 +224,7 @@ final class BookooManager: NSObject, ObservableObject {
             maxMagnitudeEver: max(prev?.maxMagnitudeEver ?? 0, magnitude),
             lastSignByte: signByte,
             lastRawHex: hex,
-            powderPeakG: session.peak,
+            powderPeakG: session.loggablePowder,
             liveWaterG: liveWater
         )
     }
@@ -286,7 +286,7 @@ final class BookooManager: NSObject, ObservableObject {
     private func postLogNotification(ml: Int, scaleName: String) {
         let content = UNMutableNotificationContent()
         content.title = "Logged \(ml) ml bottle"
-        content.body = "Bookoo · \(scaleName)"
+        content.body = "autolog · \(scaleName)"
         content.sound = .default
         let req = UNNotificationRequest(
             identifier: "bookoo-log-\(UUID().uuidString)",

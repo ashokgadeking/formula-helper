@@ -33,12 +33,26 @@ final class BookooSession {
     // keeping the response fast enough that a real pour still tracks within a
     // few samples and the lift detection trips on the first negative reading.
     private let smoothingAlpha: Double = 0.35
+    // Plateau detection: a weight must hold within ±stableBand for stableDwell
+    // before it counts as the settled powder amount. A bump spikes out of band
+    // and returns, so it never commits — the true plateau does.
+    private let stableBand: Double = 0.4
+    private let stableDwell: TimeInterval = 1.0
 
     let peripheralID: UUID
     private(set) var phase: Phase = .ready
     private(set) var peak: Double = 0
     private var smoothedWeight: Double = 0
     private var smoothedSeeded = false
+    /// The most recent settled-plateau weight (≥ measureFloor). Preferred over
+    /// `peak` when logging so a transient bump doesn't inflate the amount.
+    private(set) var stableWeight: Double = 0
+    private var candidateWeight: Double = 0
+    private var candidateSince: Date?
+
+    /// What we'd actually log as powder: the settled plateau if we have one,
+    /// else fall back to the running peak (e.g. user lifted without pausing).
+    var loggablePowder: Double { stableWeight >= measureFloor ? stableWeight : peak }
 
     var onLog: ((_ ml: Int, _ measuredGrams: Double, _ unroundedMl: Double, _ peripheralID: UUID) -> Void)?
 
@@ -55,9 +69,7 @@ final class BookooSession {
         if case .logged(let at) = phase {
             if now.timeIntervalSince(at) < cooldown { return }
             phase = .ready
-            peak = 0
-            smoothedWeight = 0
-            smoothedSeeded = false
+            resetTracking()
         }
 
         // Once a lift is underway, keep collecting the trough (most-negative
@@ -67,7 +79,7 @@ final class BookooSession {
         if case .lifting(let trough, let since) = phase {
             let newTrough = min(trough, w)
             if now.timeIntervalSince(since) >= liftSettleWindow {
-                fireLog(addedGrams: peak, liftMagnitudeG: abs(newTrough), at: now)
+                fireLog(addedGrams: loggablePowder, liftMagnitudeG: abs(newTrough), at: now)
             } else {
                 phase = .lifting(trough: newTrough, since: since)
             }
@@ -89,6 +101,20 @@ final class BookooSession {
         if s > peak { peak = s }
         if peak >= measureFloor {
             phase = .tracking(peak: peak)
+        }
+
+        // Plateau tracking (only while the bottle is on the scale). A reading
+        // that holds within ±stableBand for stableDwell commits as the settled
+        // weight; a bump jumps out of band and never commits.
+        if w > liftThreshold {
+            if abs(s - candidateWeight) <= stableBand {
+                if let since = candidateSince, now.timeIntervalSince(since) >= stableDwell {
+                    stableWeight = s
+                }
+            } else {
+                candidateWeight = s
+                candidateSince = now
+            }
         }
 
         // Lift onset — bottle off scale drives a sharp negative reading. Use
@@ -132,16 +158,23 @@ final class BookooSession {
             rounded = r; unroundedMl = f
         } else {
             // Nothing usable — reset and wait for the next prep.
-            phase = .logged(at: now); peak = 0
-            smoothedWeight = 0; smoothedSeeded = false
+            phase = .logged(at: now)
+            resetTracking()
             return
         }
 
         phase = .logged(at: now)
         let measured = addedGrams
+        resetTracking()
+        onLog?(rounded, measured, unroundedMl, peripheralID)
+    }
+
+    private func resetTracking() {
         peak = 0
         smoothedWeight = 0
         smoothedSeeded = false
-        onLog?(rounded, measured, unroundedMl, peripheralID)
+        stableWeight = 0
+        candidateWeight = 0
+        candidateSince = nil
     }
 }
