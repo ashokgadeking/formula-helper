@@ -750,9 +750,13 @@ struct LogRow: View {
                         }
                     }
                     if isAutoLogged {
-                        Text(entry.created_by.isEmpty ? "autolog" : "\(entry.created_by) · autolog")
-                            .font(.outfit(11))
-                            .foregroundColor(Color.green)
+                        (
+                            (entry.created_by.isEmpty
+                                ? Text("")
+                                : Text("\(entry.created_by) · ").foregroundColor(Color.tertiaryLabel))
+                            + Text("autolog").foregroundColor(Color.green)
+                        )
+                        .font(.outfit(11))
                     } else if !entry.created_by.isEmpty {
                         Text("\(entry.created_by)")
                             .font(.outfit(11))

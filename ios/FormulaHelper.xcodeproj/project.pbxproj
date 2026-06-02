@@ -10,6 +10,7 @@
 		1221B97638B76131A9A65FBC /* BookooCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C6B96C3B24E0EF89AB70022 /* BookooCommands.swift */; };
 		137176613AD49EAF6B40B66D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 6FCFBF8350CCD405F8977CF8 /* Assets.xcassets */; };
 		16644299F6F7443C8DA73B93 /* DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F233BF622763B28F4D9F06F /* DesignSystem.swift */; };
+		1677A7DDFEE497158545238C /* Formatters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 727CC9E03E23D6760C31AE18 /* Formatters.swift */; };
 		1AE309933D26459BE2DCB2C6 /* TrendsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AEE53434508F0BF501AD92CD /* TrendsView.swift */; };
 		22D034691A6E585FC7FFFAAD /* BookooPacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5229756CB09881F4CD451CA7 /* BookooPacket.swift */; };
 		25D8D8612C1D9AD266767E18 /* BookooPairingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8286EAF02DA620462AF0F89C /* BookooPairingView.swift */; };
@@ -73,6 +74,7 @@
 		59B86C6F62095D372CC7DE00 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
 		5F3211C08FABC08CE2EB1CE0 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		6FCFBF8350CCD405F8977CF8 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		727CC9E03E23D6760C31AE18 /* Formatters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Formatters.swift; sourceTree = "<group>"; };
 		7DDBDF0AD2A1371BD9144AE7 /* FormulaHelper.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FormulaHelper.entitlements; sourceTree = "<group>"; };
 		7E13D6385118073C8F475282 /* BookooManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookooManager.swift; sourceTree = "<group>"; };
 		7FC10E41A03C0F1761B99FDA /* AuthView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthView.swift; sourceTree = "<group>"; };
@@ -135,6 +137,14 @@
 			path = Cache;
 			sourceTree = "<group>";
 		};
+		6AC8A768F8802A7A4BD3E4D8 /* Utilities */ = {
+			isa = PBXGroup;
+			children = (
+				727CC9E03E23D6760C31AE18 /* Formatters.swift */,
+			);
+			path = Utilities;
+			sourceTree = "<group>";
+		};
 		70412E56498881B10EE739FF /* Auth */ = {
 			isa = PBXGroup;
 			children = (
@@ -187,6 +197,7 @@
 				9F47C14FFD12C6C2F8EEE37C /* Networking */,
 				4DDE1095412EF662EEA36B52 /* Notifications */,
 				787457226F60854D7ECEC495 /* Resources */,
+				6AC8A768F8802A7A4BD3E4D8 /* Utilities */,
 				FF04D9E5A521FB17B3C3818A /* Views */,
 			);
 			path = FormulaHelper;
@@ -347,6 +358,7 @@
 				88D3CE185300E009C65594AE /* CacheManager.swift in Sources */,
 				32793DC0B0FC112575AF3A20 /* ContentView.swift in Sources */,
 				16644299F6F7443C8DA73B93 /* DesignSystem.swift in Sources */,
+				1677A7DDFEE497158545238C /* Formatters.swift in Sources */,
 				E1708611DA774A4682C8192E /* FormulaHelperApp.swift in Sources */,
 				F28B25F73CF3D7854AAC6806 /* LogsView.swift in Sources */,
 				EE56ED8B2D6CC26BB1A86759 /* NotificationManager.swift in Sources */,
@@ -493,7 +505,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 72;
+				CURRENT_PROJECT_VERSION = 73;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
@@ -558,7 +570,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 72;
+				CURRENT_PROJECT_VERSION = 73;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;

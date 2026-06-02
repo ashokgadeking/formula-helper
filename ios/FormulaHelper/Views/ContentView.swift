@@ -56,6 +56,11 @@ final class StateViewModel: ObservableObject {
     /// today. Recomputed on each state change.
     @Published private(set) var todayPowderDeviationG: Double?
     private var pollTask: Task<Void, Never>?
+    /// After an optimistic start, the timer end we expect the server to report.
+    /// Guards `refresh()` from regressing to a staler (expired) read while the
+    /// write propagates — which caused a brief flash back to the discard card.
+    private var pendingTimerEnd: Double?
+    private var pendingTimerSetAt: Date?
 
     init() {
         // Refresh immediately when a Bookoo auto-log lands, rather than waiting
@@ -78,6 +83,22 @@ final class StateViewModel: ObservableObject {
     func refresh() async {
         do {
             let fresh = try await APIClient.shared.getState()
+
+            // If we just started a bottle, ignore a server read that hasn't yet
+            // caught up (its timer is older than the one we optimistically set).
+            // Applying it would flash the discard card. Retry shortly; give up
+            // after a short window so a genuine reset elsewhere isn't ignored.
+            if let pending = pendingTimerEnd, let setAt = pendingTimerSetAt {
+                let serverCaughtUp = fresh.countdown_end >= pending - 5
+                let windowExpired = Date().timeIntervalSince(setAt) > 8
+                if serverCaughtUp || windowExpired {
+                    pendingTimerEnd = nil; pendingTimerSetAt = nil
+                } else {
+                    Task { try? await Task.sleep(for: .milliseconds(600)); await refresh() }
+                    return
+                }
+            }
+
             state = fresh; CacheManager.shared.save(fresh); computeRates(); computeDeviation(); errorMessage = nil
             WidgetCenter.shared.reloadAllTimelines()
             syncNotification()
@@ -118,6 +139,8 @@ final class StateViewModel: ObservableObject {
             )
             s.mix_log.append(pending)
             state = s
+            pendingTimerEnd = s.countdown_end
+            pendingTimerSetAt = Date()
             syncNotification()
             pushOptimisticToWidgets()
         }
@@ -193,6 +216,7 @@ final class StateViewModel: ObservableObject {
     }
 
     func resetTimer() async {
+        pendingTimerEnd = nil; pendingTimerSetAt = nil
         do {
             try await APIClient.shared.resetTimer()
             NotificationManager.shared.cancelExpiry()
@@ -264,12 +288,7 @@ final class StateViewModel: ObservableObject {
         return out.string(from: last)
     }
 
-    private var diaperDateFormatter: DateFormatter {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd hh:mm a"
-        f.locale = Locale(identifier: "en_US_POSIX")
-        return f
-    }
+    private var diaperDateFormatter: DateFormatter { Formatters.entry }
 
     private func computeRates() {
         guard let entries = state?.mix_log, entries.count >= 2 else { return }
@@ -319,12 +338,7 @@ final class StateViewModel: ObservableObject {
         todayPowderDeviationG = counted > 0 ? total : nil
     }
 
-    func parseDate(_ s: String) -> Date? {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd hh:mm a"
-        f.locale = Locale(identifier: "en_US_POSIX")
-        return f.date(from: s)
-    }
+    func parseDate(_ s: String) -> Date? { Formatters.entry.date(from: s) }
 
     private func startPolling() {
         pollTask?.cancel()
@@ -539,6 +553,7 @@ private struct BannerContent: View {
                         .font(aboveTimerFont)
                         .tracking(1.2)
                         .foregroundColor(deviationColor(dev))
+                        .opacity(0.5)
                         .padding(.bottom, 12)
                 }
             }

@@ -32,6 +32,12 @@ _cached_state = {
 }
 _online = True
 
+# After starting a bottle, the timer end we expect the server to report. Guards
+# poll_state from regressing to a staler (expired) read while the write
+# propagates — which caused a brief flash back to the discard screen.
+_pending_timer_end = None
+_pending_timer_set_at = 0.0
+
 
 def _api_request(path, method="GET", data=None, timeout=10):
     """Make an API request. Returns parsed JSON or None on failure."""
@@ -78,9 +84,20 @@ def is_online():
 
 def poll_state():
     """Fetch full state from the API. Returns the state dict."""
-    global _cached_state
+    global _cached_state, _pending_timer_end, _pending_timer_set_at
     result = _api_request("/api/state")
     if result and "mix_log" in result:
+        # If we just started a bottle, ignore a server read that hasn't caught
+        # up yet (its timer is older than the one we optimistically set) so the
+        # UI doesn't flash back to the discard screen. Give up after 8 s so a
+        # genuine reset elsewhere isn't ignored.
+        if _pending_timer_end is not None:
+            caught_up = result.get("countdown_end", 0.0) >= _pending_timer_end - 5
+            window_expired = (time.time() - _pending_timer_set_at) > 8
+            if caught_up or window_expired:
+                _pending_timer_end = None
+            else:
+                return _cached_state
         with _lock:
             _cached_state = result
         _save_cache()
@@ -120,9 +137,21 @@ def get_timer():
 
 def start_timer(ml):
     """Start a new bottle timer. Returns the API response or None."""
+    global _cached_state, _pending_timer_end, _pending_timer_set_at
     result = _api_request("/api/start", method="POST", data={"ml": ml})
     if result and result.get("ok"):
-        # Immediately poll to update cache
+        # Optimistically reflect the new timer immediately, and remember the
+        # expected end so poll_state won't regress to a stale expired read.
+        secs = get_settings().get("countdown_secs", 3900)
+        end = time.time() + secs
+        with _lock:
+            _cached_state["countdown_end"] = end
+            _cached_state["remaining_secs"] = secs
+            _cached_state["expired"] = False
+            _cached_state["mixed_ml"] = ml
+            _cached_state["mixed_at_str"] = time.strftime("%I:%M %p")
+        _pending_timer_end = end
+        _pending_timer_set_at = time.time()
         poll_state()
     return result
 
@@ -147,6 +176,8 @@ def edit_log_entry(sk, updates):
 
 def reset_timer():
     """Reset the countdown timer."""
+    global _pending_timer_end
+    _pending_timer_end = None
     result = _api_request("/api/reset-timer", method="POST")
     if result and result.get("ok"):
         poll_state()

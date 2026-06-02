@@ -69,16 +69,9 @@ private struct FormulaTrends: View {
 
     // MARK: Computed
 
-    private var entryFormatter: DateFormatter {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd hh:mm a"
-        f.locale = Locale(identifier: "en_US_POSIX")
-        return f
-    }
+    private var entryFormatter: DateFormatter { Formatters.entry }
 
-    private func dayKey(_ d: Date) -> String {
-        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f.string(from: d)
-    }
+    private func dayKey(_ d: Date) -> String { Formatters.dayKey.string(from: d) }
 
     private var filtered: [LogEntry] {
         guard let entries = vm.state?.mix_log else { return [] }
@@ -139,7 +132,6 @@ private struct FormulaTrends: View {
 
     private var dailyBars: [DailyBar] {
         let f = entryFormatter
-        let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd"
         var byDay: [String: (date: Date, consumed: Int, leftover: Int)] = [:]
         for e in filtered {
             guard let d = f.date(from: e.date) else { continue }
@@ -443,12 +435,7 @@ private struct DiaperTrends: View {
         case today = "Today", week = "Week", month = "Month", all = "All"
     }
 
-    private var entryFormatter: DateFormatter {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd hh:mm a"
-        f.locale = Locale(identifier: "en_US_POSIX")
-        return f
-    }
+    private var entryFormatter: DateFormatter { Formatters.entry }
 
     private var filtered: [DiaperEntry] {
         guard let entries = vm.state?.diaper_log else { return [] }
@@ -473,7 +460,7 @@ private struct DiaperTrends: View {
         var dict: [String: [DiaperEntry]] = [:]
         for e in filtered {
             guard let d = f.date(from: e.date) else { continue }
-            let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd"
+            let df = Formatters.dayKey
             dict[df.string(from: d), default: []].append(e)
         }
         return dict.map { (key: $0.key, entries: $0.value) }.sorted { $0.key < $1.key }
@@ -607,7 +594,7 @@ private struct DiaperTimeline: View {
     }
 
     private func dayLabel(_ key: String) -> some View {
-        let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd"
+        let df = Formatters.dayKey
         let d = df.date(from: key) ?? Date()
         let weekday = ["Su","Mo","Tu","We","Th","Fr","Sa"][Calendar.current.component(.weekday, from: d) - 1]
         let dayNum  = Calendar.current.component(.day, from: d)
@@ -637,12 +624,7 @@ private struct NapTrends: View {
         case today = "Today", week = "Week", month = "Month", all = "All"
     }
 
-    private var entryFormatter: DateFormatter {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd hh:mm a"
-        f.locale = Locale(identifier: "en_US_POSIX")
-        return f
-    }
+    private var entryFormatter: DateFormatter { Formatters.entry }
 
     private var filtered: [NapEntry] {
         guard let entries = vm.state?.nap_log else { return [] }
@@ -667,7 +649,7 @@ private struct NapTrends: View {
         var dict: [String: [NapEntry]] = [:]
         for e in filtered {
             guard let d = f.date(from: e.date) else { continue }
-            let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd"
+            let df = Formatters.dayKey
             dict[df.string(from: d), default: []].append(e)
         }
         return dict.map { (key: $0.key, entries: $0.value) }.sorted { $0.key < $1.key }
@@ -809,7 +791,7 @@ private struct NapTimeline: View {
     }
 
     private func dayLabel(_ key: String) -> some View {
-        let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd"
+        let df = Formatters.dayKey
         let d = df.date(from: key) ?? Date()
         let weekday = ["Su","Mo","Tu","We","Th","Fr","Sa"][Calendar.current.component(.weekday, from: d) - 1]
         let dayNum  = Calendar.current.component(.day, from: d)
