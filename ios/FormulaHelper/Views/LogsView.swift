@@ -2,15 +2,51 @@ import SwiftUI
 
 private let rowHeight: CGFloat = 64
 
+// MARK: - Inline edit save button
+
+/// Save button shared by the long-press inline editors (formula / diaper / nap).
+///
+/// Two reasons it exists instead of an inline `Button`:
+///  1. It keeps a constant footprint while saving — the "Save" text stays laid
+///     out (just hidden) under a spinner, so the field next to it doesn't resize.
+///  2. `.borderless` restricts the tap target to the button itself. A default-
+///     styled button inside a `List` row becomes the row's primary action, so a
+///     tap anywhere in the cell would fire it.
+struct EditSaveButton: View {
+    let saving: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text("Save")
+                .font(.outfit(14, weight: .semibold))
+                .foregroundColor(Color.green)
+                .opacity(saving ? 0 : 1)
+                .padding(.horizontal, 16).padding(.vertical, 12)
+                .background(Color.greenFill)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.greenBorder, lineWidth: 1))
+                .overlay { if saving { ProgressView().controlSize(.small).tint(Color.green) } }
+        }
+        .buttonStyle(.borderless)
+        .disabled(saving)
+    }
+}
+
 // MARK: - Logs page
 
 struct LogsView: View {
     @ObservedObject var vm: StateViewModel
 
     @State private var selectedDate: String = ""   // "YYYY-MM-DD"
+    /// The calendar day the default was last anchored to. Lets us re-default to
+    /// today when the day rolls over (app left open past midnight) without
+    /// clobbering same-day manual navigation.
+    @State private var anchoredDay: String = ""
     @State private var tab: LogTab = .formula
     @State private var showAddSheet = false
     @State private var expandedId: String?
+    @Environment(\.scenePhase) private var scenePhase
 
     enum LogTab { case formula, diaper, nap }
 
@@ -55,11 +91,15 @@ struct LogsView: View {
     }
 
     private var activeDates: [String] {
+        let base: [String]
         switch tab {
-        case .formula: return formulaDates
-        case .diaper:  return diaperDates
-        case .nap:     return napDates
+        case .formula: base = formulaDates
+        case .diaper:  base = diaperDates
+        case .nap:     base = napDates
         }
+        // Always keep today selectable so the log opens on today even before
+        // anything is logged, and you can still page back to earlier days.
+        return Array(Set(base + [todayString()])).sorted()
     }
 
     // Entries for the selected date — newest by occurrence first.
@@ -270,8 +310,11 @@ struct LogsView: View {
                 }
             }
         }
-        .onAppear { initDate() }
-        .onChange(of: tab) { _, _ in initDate() }
+        .onAppear { anchorToToday(); clampDateForTab() }
+        .onChange(of: tab) { _, _ in clampDateForTab() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { anchorToToday() }
+        }
         .sheet(isPresented: $showAddSheet) {
             ManualAddSheet(tab: tab, vm: vm, isPresented: $showAddSheet)
         }
@@ -324,10 +367,24 @@ struct LogsView: View {
         )
     }
 
-    private func initDate() {
-        let dates = activeDates
-        if let last = dates.last, !selectedDate.isEmpty, dates.contains(selectedDate) { return }
-        selectedDate = activeDates.last ?? todayString()
+    /// Default the visible day to today on first open, and re-default whenever
+    /// the calendar day has rolled over since we last anchored (e.g. the app was
+    /// left open past midnight). Same-day re-appearances are a no-op so manual
+    /// day navigation is preserved.
+    private func anchorToToday() {
+        let today = todayString()
+        guard anchoredDay != today else { return }
+        anchoredDay = today
+        selectedDate = today
+    }
+
+    /// Keep the selection on a navigable date for the current tab. On a tab
+    /// switch the previously selected day may have no entries in the new tab;
+    /// today is always navigable, so fall back to it.
+    private func clampDateForTab() {
+        if selectedDate.isEmpty || !activeDates.contains(selectedDate) {
+            selectedDate = todayString()
+        }
     }
 
     private func dayPrefix(_ dateStr: String) -> String? {
@@ -426,7 +483,7 @@ struct DiaperRow: View {
 
                     Spacer()
 
-                    Button(saving ? "…" : "Save") {
+                    EditSaveButton(saving: saving) {
                         guard !saving else { return }
                         Haptics.tap(.medium)
                         saving = true
@@ -439,12 +496,6 @@ struct DiaperRow: View {
                             await vm.refresh(); saving = false; expanded = false
                         }
                     }
-                    .font(.outfit(14, weight: .semibold)).foregroundColor(Color.green)
-                    .padding(.horizontal, 16).padding(.vertical, 12)
-                    .background(Color.greenFill)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.greenBorder, lineWidth: 1))
-                    .disabled(saving)
                 }
                 .padding(.horizontal, 14).padding(.vertical, 10)
                 .background(Color.overlayBackground)
@@ -560,7 +611,7 @@ struct NapRow: View {
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                             .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.opaqueSeparator, lineWidth: 1))
 
-                        Button(saving ? "…" : "Save") {
+                        EditSaveButton(saving: saving) {
                             guard !saving else { return }
                             Haptics.tap(.medium)
                             saving = true
@@ -574,12 +625,6 @@ struct NapRow: View {
                                 await vm.refresh(); saving = false; expanded = false
                             }
                         }
-                        .font(.outfit(14, weight: .semibold)).foregroundColor(Color.green)
-                        .padding(.horizontal, 16).padding(.vertical, 12)
-                        .background(Color.greenFill)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.greenBorder, lineWidth: 1))
-                        .disabled(saving)
                     }
                 }
                 .padding(.horizontal, 14).padding(.vertical, 10)
@@ -643,6 +688,11 @@ struct LogRow: View {
         return digits.isEmpty ? nil : digits
     }
 
+    /// ml shown on the collapsed row, rounded to the nearest 10 so noisy
+    /// measured values (119, 121, 122…) read as a clean 120. The exact value is
+    /// still surfaced and editable in the long-press editor.
+    var displayMl: Int { Int((Double(entry.ml) / 10).rounded()) * 10 }
+
     /// Decompose the bottle's ml into the water + powder recipe used to mix it.
     /// If this entry was logged via a paired Bookoo scale, return the actual
     /// peak grams the scale read (preserved client-side keyed by sk). Otherwise
@@ -689,13 +739,7 @@ struct LogRow: View {
     }
 
     private var saveButton: some View {
-        Button(saving ? "…" : "Save") { saveEdits() }
-            .font(.outfit(14, weight: .semibold)).foregroundColor(Color.green)
-            .padding(.horizontal, 16).padding(.vertical, 12)
-            .background(Color.greenFill)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.greenBorder, lineWidth: 1))
-            .disabled(saving)
+        EditSaveButton(saving: saving, action: saveEdits)
     }
 
     private func saveEdits() {
@@ -740,7 +784,7 @@ struct LogRow: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 10) {
-                        Text("\(entry.ml)ml")
+                        Text("\(displayMl)ml")
                             .font(.outfit(16, weight: .semibold))
                             .foregroundColor(Color.green)
                         if let lo = normalizedLeftover {
