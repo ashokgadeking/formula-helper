@@ -17,6 +17,7 @@
 		22D034691A6E585FC7FFFAAD /* BookooPacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5229756CB09881F4CD451CA7 /* BookooPacket.swift */; };
 		25D8D8612C1D9AD266767E18 /* BookooPairingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8286EAF02DA620462AF0F89C /* BookooPairingView.swift */; };
 		32793DC0B0FC112575AF3A20 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F917BF7C45D10DCAA817C0C /* ContentView.swift */; };
+		51BE6D9D8FE8CF39D2F51C8B /* SessionRelay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E30038167E6C2EC0B0C8AD0 /* SessionRelay.swift */; };
 		5A5C9A61D7D9AA35C04C4CA6 /* BookooManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E13D6385118073C8F475282 /* BookooManager.swift */; };
 		5E984DA652BA9D6E0E3EC0E0 /* SessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7C35AA1FF1ABAA226EDBCEA /* SessionStore.swift */; };
 		67A6C3A8AF7A3ABBF031083F /* SessionSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5842117B9A43990015F44157 /* SessionSync.swift */; };
@@ -117,6 +118,7 @@
 		727CC9E03E23D6760C31AE18 /* Formatters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Formatters.swift; sourceTree = "<group>"; };
 		7DDBDF0AD2A1371BD9144AE7 /* FormulaHelper.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FormulaHelper.entitlements; sourceTree = "<group>"; };
 		7E13D6385118073C8F475282 /* BookooManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookooManager.swift; sourceTree = "<group>"; };
+		7E30038167E6C2EC0B0C8AD0 /* SessionRelay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionRelay.swift; sourceTree = "<group>"; };
 		7FC10E41A03C0F1761B99FDA /* AuthView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthView.swift; sourceTree = "<group>"; };
 		8286EAF02DA620462AF0F89C /* BookooPairingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookooPairingView.swift; sourceTree = "<group>"; };
 		8602640337F088BA7116087D /* NotificationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationManager.swift; sourceTree = "<group>"; };
@@ -278,6 +280,7 @@
 			isa = PBXGroup;
 			children = (
 				DC7BA17B83F1BF39E610886B /* APIClient.swift */,
+				7E30038167E6C2EC0B0C8AD0 /* SessionRelay.swift */,
 			);
 			path = Networking;
 			sourceTree = "<group>";
@@ -475,6 +478,7 @@
 				E1708611DA774A4682C8192E /* FormulaHelperApp.swift in Sources */,
 				F28B25F73CF3D7854AAC6806 /* LogsView.swift in Sources */,
 				EE56ED8B2D6CC26BB1A86759 /* NotificationManager.swift in Sources */,
+				51BE6D9D8FE8CF39D2F51C8B /* SessionRelay.swift in Sources */,
 				7FAE34D8C74923641DE95D29 /* SettingsView.swift in Sources */,
 				1AE309933D26459BE2DCB2C6 /* TrendsView.swift in Sources */,
 			);
