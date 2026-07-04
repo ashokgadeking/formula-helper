@@ -42,11 +42,8 @@ struct WatchRootView: View {
                         .foregroundStyle(.red)
                         .lineLimit(2)
                 }
-                feedButtons
-                CustomFeedButton(isLogging: vm.isLogging) { ml in
-                    Task { await vm.logFeed(ml: ml) }
-                }
                 diaperButtons
+                feedButtons
                 napButton
             }
         }
@@ -113,29 +110,5 @@ struct WatchRootView: View {
     private static func hhmm(_ interval: TimeInterval) -> String {
         let mins = max(0, Int(interval)) / 60
         return mins < 60 ? "\(mins)m" : "\(mins / 60)h \(mins % 60)m"
-    }
-}
-
-/// Crown-adjustable custom amount: rotate the crown to pick, tap to log.
-struct CustomFeedButton: View {
-    let isLogging: Bool
-    let log: (Int) -> Void
-    @State private var ml = 120.0
-
-    var body: some View {
-        Button {
-            log(Int(ml))
-        } label: {
-            HStack {
-                Image(systemName: "digitalcrown.horizontal.arrow.counterclockwise")
-                    .font(.caption)
-                Text("\(Int(ml)) ml").font(.body.bold())
-            }
-            .frame(maxWidth: .infinity)
-        }
-        .disabled(isLogging)
-        .focusable(true)
-        .digitalCrownRotation($ml, from: 30, through: 240, by: 10,
-                              sensitivity: .low, isContinuous: false)
     }
 }
