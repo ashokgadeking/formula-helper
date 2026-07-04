@@ -13,6 +13,7 @@ final class WatchViewModel: ObservableObject {
         guard signedIn else { return }
         do {
             state = try await APIClient.shared.getState()
+            errorMessage = nil
         } catch {
             handle(error)
         }
