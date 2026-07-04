@@ -3,13 +3,20 @@ import WatchKit
 
 @MainActor
 final class WatchViewModel: ObservableObject {
+    private let store: SessionStore
+
     @Published var state: AppStateResponse?
-    @Published var signedIn = SessionStore.shared.isSignedIn
+    @Published var signedIn: Bool
     @Published var isLogging = false
     @Published var errorMessage: String?
 
+    init(store: SessionStore = .shared) {
+        self.store = store
+        self.signedIn = store.isSignedIn
+    }
+
     func refresh() async {
-        signedIn = SessionStore.shared.isSignedIn
+        signedIn = store.isSignedIn
         guard signedIn else { return }
         do {
             state = try await APIClient.shared.getState()
@@ -46,9 +53,9 @@ final class WatchViewModel: ObservableObject {
         }
     }
 
-    private func handle(_ error: Error) {
+    func handle(_ error: Error) {
         if case APIError.badStatus(let code, _) = error, code == 401 || code == 403 {
-            SessionStore.shared.clear()
+            store.clear()
             signedIn = false
         } else {
             errorMessage = error.localizedDescription

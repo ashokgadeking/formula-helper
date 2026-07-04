@@ -111,7 +111,7 @@ struct WatchRootView: View {
     }
 
     private static func hhmm(_ interval: TimeInterval) -> String {
-        let mins = Int(interval) / 60
+        let mins = max(0, Int(interval)) / 60
         return mins < 60 ? "\(mins)m" : "\(mins / 60)h \(mins % 60)m"
     }
 }

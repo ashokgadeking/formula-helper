@@ -47,6 +47,7 @@
 		EE56ED8B2D6CC26BB1A86759 /* NotificationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8602640337F088BA7116087D /* NotificationManager.swift */; };
 		F28B25F73CF3D7854AAC6806 /* LogsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F176CA9E0656EDAEFB3EA9ED /* LogsView.swift */; };
 		F714F486D1F608AEC89306CF /* AuthView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FC10E41A03C0F1761B99FDA /* AuthView.swift */; };
+		FFF16D12FCEA3529B03C0ACB /* WatchViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A377573605799B1F1A508CD /* WatchViewModelTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -105,6 +106,7 @@
 		16D740D538E64898893C6969 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		16E2C4733A3BDD5F6C82C9D3 /* AuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthManager.swift; sourceTree = "<group>"; };
 		19CEB86F4C2B7A1545C03F30 /* WatchStatsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchStatsTests.swift; sourceTree = "<group>"; };
+		1A377573605799B1F1A508CD /* WatchViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchViewModelTests.swift; sourceTree = "<group>"; };
 		1C6B96C3B24E0EF89AB70022 /* BookooCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookooCommands.swift; sourceTree = "<group>"; };
 		1DB7DEBE84588B0B0849C821 /* FormulaHelperApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FormulaHelperApp.swift; sourceTree = "<group>"; };
 		2363D7073E8B031E8C31C189 /* CacheManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CacheManager.swift; sourceTree = "<group>"; };
@@ -161,6 +163,7 @@
 				48E468C00FF73580B142E2F5 /* SessionStoreTests.swift */,
 				6F9244D5E4C915EC43DBC177 /* SessionSyncTests.swift */,
 				19CEB86F4C2B7A1545C03F30 /* WatchStatsTests.swift */,
+				1A377573605799B1F1A508CD /* WatchViewModelTests.swift */,
 			);
 			path = FormulaHelperWatchTests;
 			sourceTree = "<group>";
@@ -519,6 +522,7 @@
 				6AB982DB9F1A123664500E0D /* SessionStoreTests.swift in Sources */,
 				098D381EDF0DD17BA0185E09 /* SessionSyncTests.swift in Sources */,
 				C8FD59EEC8A0B144CE13EC23 /* WatchStatsTests.swift in Sources */,
+				FFF16D12FCEA3529B03C0ACB /* WatchViewModelTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

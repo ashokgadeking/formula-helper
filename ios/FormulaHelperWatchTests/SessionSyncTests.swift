@@ -4,17 +4,26 @@ import XCTest
 final class SessionSyncTests: XCTestCase {
     private var defaults: UserDefaults!
     private var store: SessionStore!
+    private let host = URL(string: APIClient.baseURL)!
 
     override func setUp() {
         super.setUp()
         defaults = UserDefaults(suiteName: "SessionSyncTests")!
         defaults.removePersistentDomain(forName: "SessionSyncTests")
         store = SessionStore(defaults: defaults, cookieStorage: .shared)
+        clearSessionCookies()
     }
 
     override func tearDown() {
+        clearSessionCookies()
         defaults.removePersistentDomain(forName: "SessionSyncTests")
         super.tearDown()
+    }
+
+    private func clearSessionCookies() {
+        for c in HTTPCookieStorage.shared.cookies(for: host) ?? [] where c.name == "session" {
+            HTTPCookieStorage.shared.deleteCookie(c)
+        }
     }
 
     func testHandleContextStoresToken() {
