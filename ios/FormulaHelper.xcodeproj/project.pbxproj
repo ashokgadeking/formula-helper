@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		044A2C96955AEF9C0E7B0199 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59B86C6F62095D372CC7DE00 /* AppState.swift */; };
+		098D381EDF0DD17BA0185E09 /* SessionSyncTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F9244D5E4C915EC43DBC177 /* SessionSyncTests.swift */; };
 		1221B97638B76131A9A65FBC /* BookooCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C6B96C3B24E0EF89AB70022 /* BookooCommands.swift */; };
 		137176613AD49EAF6B40B66D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 6FCFBF8350CCD405F8977CF8 /* Assets.xcassets */; };
 		16644299F6F7443C8DA73B93 /* DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F233BF622763B28F4D9F06F /* DesignSystem.swift */; };
@@ -18,6 +19,7 @@
 		32793DC0B0FC112575AF3A20 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F917BF7C45D10DCAA817C0C /* ContentView.swift */; };
 		5A5C9A61D7D9AA35C04C4CA6 /* BookooManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E13D6385118073C8F475282 /* BookooManager.swift */; };
 		5E984DA652BA9D6E0E3EC0E0 /* SessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7C35AA1FF1ABAA226EDBCEA /* SessionStore.swift */; };
+		67A6C3A8AF7A3ABBF031083F /* SessionSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5842117B9A43990015F44157 /* SessionSync.swift */; };
 		68513A34603B030B1EB8FCC3 /* CacheManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2363D7073E8B031E8C31C189 /* CacheManager.swift */; };
 		6AB982DB9F1A123664500E0D /* SessionStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48E468C00FF73580B142E2F5 /* SessionStoreTests.swift */; };
 		73AC5261FACCE8CA767E8727 /* WatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 334574A7959148B7F370130D /* WatchApp.swift */; };
@@ -107,8 +109,10 @@
 		5169BE3E5B1F7D31C0C5F74B /* FormulaHelperWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FormulaHelperWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5229756CB09881F4CD451CA7 /* BookooPacket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookooPacket.swift; sourceTree = "<group>"; };
 		5433D692DBC2A2D9B382A24E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		5842117B9A43990015F44157 /* SessionSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSync.swift; sourceTree = "<group>"; };
 		59B86C6F62095D372CC7DE00 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
 		5F3211C08FABC08CE2EB1CE0 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		6F9244D5E4C915EC43DBC177 /* SessionSyncTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSyncTests.swift; sourceTree = "<group>"; };
 		6FCFBF8350CCD405F8977CF8 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		727CC9E03E23D6760C31AE18 /* Formatters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Formatters.swift; sourceTree = "<group>"; };
 		7DDBDF0AD2A1371BD9144AE7 /* FormulaHelper.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FormulaHelper.entitlements; sourceTree = "<group>"; };
@@ -145,6 +149,7 @@
 			isa = PBXGroup;
 			children = (
 				48E468C00FF73580B142E2F5 /* SessionStoreTests.swift */,
+				6F9244D5E4C915EC43DBC177 /* SessionSyncTests.swift */,
 			);
 			path = FormulaHelperWatchTests;
 			sourceTree = "<group>";
@@ -293,6 +298,7 @@
 			children = (
 				29992653D0ADB33D5F5BBBF0 /* Info.plist */,
 				B7C35AA1FF1ABAA226EDBCEA /* SessionStore.swift */,
+				5842117B9A43990015F44157 /* SessionSync.swift */,
 				334574A7959148B7F370130D /* WatchApp.swift */,
 			);
 			path = FormulaHelperWatch;
@@ -482,6 +488,7 @@
 				044A2C96955AEF9C0E7B0199 /* AppState.swift in Sources */,
 				B4BED6ADD6867FF7687B64AA /* Formatters.swift in Sources */,
 				5E984DA652BA9D6E0E3EC0E0 /* SessionStore.swift in Sources */,
+				67A6C3A8AF7A3ABBF031083F /* SessionSync.swift in Sources */,
 				73AC5261FACCE8CA767E8727 /* WatchApp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -491,6 +498,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				6AB982DB9F1A123664500E0D /* SessionStoreTests.swift in Sources */,
+				098D381EDF0DD17BA0185E09 /* SessionSyncTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
