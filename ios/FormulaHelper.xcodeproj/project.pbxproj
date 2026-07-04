@@ -41,6 +41,7 @@
 		C409CB26DB1973EB24F1F537 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC7BA17B83F1BF39E610886B /* APIClient.swift */; };
 		C8FD59EEC8A0B144CE13EC23 /* WatchStatsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19CEB86F4C2B7A1545C03F30 /* WatchStatsTests.swift */; };
 		C98879DCF80D171C1F9EC171 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59B86C6F62095D372CC7DE00 /* AppState.swift */; };
+		CAD177A1C30F202C4942CA56 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = EDBB8DAF876067ECD120F050 /* Assets.xcassets */; };
 		CEBCF532B5BB82B73E0F4A09 /* FormulaHelperWidgets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06FD3459A1C69170F7BB04CD /* FormulaHelperWidgets.swift */; };
 		E1708611DA774A4682C8192E /* FormulaHelperApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DB7DEBE84588B0B0849C821 /* FormulaHelperApp.swift */; };
 		E2E85502BCCC1214DB5BDECD /* FormulaHelperWatch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 5169BE3E5B1F7D31C0C5F74B /* FormulaHelperWatch.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -141,6 +142,7 @@
 		D7A5885F529A565C93E3ED92 /* WatchStats.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchStats.swift; sourceTree = "<group>"; };
 		DC7BA17B83F1BF39E610886B /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		ECBDA341B99CF9F72FB06DE6 /* WatchViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchViewModel.swift; sourceTree = "<group>"; };
+		EDBB8DAF876067ECD120F050 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		F176CA9E0656EDAEFB3EA9ED /* LogsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogsView.swift; sourceTree = "<group>"; };
 		F98B2806D638518BC4FCF037 /* FormulaHelperWidgets.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FormulaHelperWidgets.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -311,6 +313,7 @@
 		F37998A48A37E77ACFB68AA8 /* FormulaHelperWatch */ = {
 			isa = PBXGroup;
 			children = (
+				EDBB8DAF876067ECD120F050 /* Assets.xcassets */,
 				29992653D0ADB33D5F5BBBF0 /* Info.plist */,
 				B7C35AA1FF1ABAA226EDBCEA /* SessionStore.swift */,
 				5842117B9A43990015F44157 /* SessionSync.swift */,
@@ -342,6 +345,7 @@
 			buildConfigurationList = 973A2118BCAB91B8292DAF6E /* Build configuration list for PBXNativeTarget "FormulaHelperWatch" */;
 			buildPhases = (
 				3B2561A0DD5634E2979763C6 /* Sources */,
+				4BEBE92AF5A3929EBA149187 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -460,6 +464,14 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		4BEBE92AF5A3929EBA149187 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CAD177A1C30F202C4942CA56 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		FBCE3EED168DD7B5FE1D11AB /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
