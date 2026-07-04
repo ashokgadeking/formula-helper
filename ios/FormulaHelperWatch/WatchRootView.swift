@@ -47,7 +47,6 @@ struct WatchRootView: View {
                 napButton
             }
         }
-        .navigationTitle("AvantiLog")
     }
 
     private var header: some View {
