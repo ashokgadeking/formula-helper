@@ -14,9 +14,11 @@
 		137176613AD49EAF6B40B66D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 6FCFBF8350CCD405F8977CF8 /* Assets.xcassets */; };
 		16644299F6F7443C8DA73B93 /* DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F233BF622763B28F4D9F06F /* DesignSystem.swift */; };
 		1677A7DDFEE497158545238C /* Formatters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 727CC9E03E23D6760C31AE18 /* Formatters.swift */; };
+		178689596AD2AA43F92FCEDD /* WatchRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A340D0F158A2ED22FCC244D0 /* WatchRootView.swift */; };
 		1AE309933D26459BE2DCB2C6 /* TrendsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AEE53434508F0BF501AD92CD /* TrendsView.swift */; };
 		22D034691A6E585FC7FFFAAD /* BookooPacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5229756CB09881F4CD451CA7 /* BookooPacket.swift */; };
 		25D8D8612C1D9AD266767E18 /* BookooPairingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8286EAF02DA620462AF0F89C /* BookooPairingView.swift */; };
+		2708DE8897BCBC5353CEDE71 /* WatchViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECBDA341B99CF9F72FB06DE6 /* WatchViewModel.swift */; };
 		32793DC0B0FC112575AF3A20 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F917BF7C45D10DCAA817C0C /* ContentView.swift */; };
 		51BE6D9D8FE8CF39D2F51C8B /* SessionRelay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E30038167E6C2EC0B0C8AD0 /* SessionRelay.swift */; };
 		5A5C9A61D7D9AA35C04C4CA6 /* BookooManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E13D6385118073C8F475282 /* BookooManager.swift */; };
@@ -129,12 +131,14 @@
 		8F917BF7C45D10DCAA817C0C /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		9005B77617B063E3AFAEF723 /* Outfit-Variable.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Outfit-Variable.ttf"; sourceTree = "<group>"; };
 		9F233BF622763B28F4D9F06F /* DesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignSystem.swift; sourceTree = "<group>"; };
+		A340D0F158A2ED22FCC244D0 /* WatchRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchRootView.swift; sourceTree = "<group>"; };
 		AEE53434508F0BF501AD92CD /* TrendsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrendsView.swift; sourceTree = "<group>"; };
 		B7C35AA1FF1ABAA226EDBCEA /* SessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStore.swift; sourceTree = "<group>"; };
 		BADA816369F6603346F6504E /* BookooSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookooSession.swift; sourceTree = "<group>"; };
 		BDB20A312F00267FC33A6AC6 /* FormulaHelperWatchTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FormulaHelperWatchTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		D7A5885F529A565C93E3ED92 /* WatchStats.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchStats.swift; sourceTree = "<group>"; };
 		DC7BA17B83F1BF39E610886B /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
+		ECBDA341B99CF9F72FB06DE6 /* WatchViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchViewModel.swift; sourceTree = "<group>"; };
 		F176CA9E0656EDAEFB3EA9ED /* LogsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogsView.swift; sourceTree = "<group>"; };
 		F98B2806D638518BC4FCF037 /* FormulaHelperWidgets.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FormulaHelperWidgets.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -308,7 +312,9 @@
 				B7C35AA1FF1ABAA226EDBCEA /* SessionStore.swift */,
 				5842117B9A43990015F44157 /* SessionSync.swift */,
 				334574A7959148B7F370130D /* WatchApp.swift */,
+				A340D0F158A2ED22FCC244D0 /* WatchRootView.swift */,
 				D7A5885F529A565C93E3ED92 /* WatchStats.swift */,
+				ECBDA341B99CF9F72FB06DE6 /* WatchViewModel.swift */,
 			);
 			path = FormulaHelperWatch;
 			sourceTree = "<group>";
@@ -500,7 +506,9 @@
 				5E984DA652BA9D6E0E3EC0E0 /* SessionStore.swift in Sources */,
 				67A6C3A8AF7A3ABBF031083F /* SessionSync.swift in Sources */,
 				73AC5261FACCE8CA767E8727 /* WatchApp.swift in Sources */,
+				178689596AD2AA43F92FCEDD /* WatchRootView.swift in Sources */,
 				085BDC0D655422E99008D909 /* WatchStats.swift in Sources */,
+				2708DE8897BCBC5353CEDE71 /* WatchViewModel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
