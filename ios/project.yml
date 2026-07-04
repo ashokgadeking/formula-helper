@@ -10,7 +10,7 @@ settings:
   base:
     SWIFT_VERSION: "6.0"
     MARKETING_VERSION: "1.0.0"
-    CURRENT_PROJECT_VERSION: "76"
+    CURRENT_PROJECT_VERSION: "77"
 
 targets:
   FormulaHelper:
@@ -125,7 +125,14 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.ashokteja.formulahelper.watchkitapp
         DEVELOPMENT_TEAM: "TV6FL9FHCE"
-        CODE_SIGN_STYLE: Automatic
+      configs:
+        Debug:
+          CODE_SIGN_STYLE: Automatic
+        Release:
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: "Apple Distribution: ASHOK TEJA GADEPALLI (TV6FL9FHCE)"
+          PROVISIONING_PROFILE_SPECIFIER: FormulaHelperWatchAppStore
+          PROVISIONING_PROFILE: "12975ff6-c5ca-43fb-8ca2-cc4f7c1f3983"
     scheme:
       testTargets:
         - FormulaHelperWatchTests

@@ -18,6 +18,8 @@
         <string>FormulaHelperAppStore</string>
         <key>com.ashokteja.formulahelper.widgets</key>
         <string>FormulaHelperWidgetsAppStore</string>
+        <key>com.ashokteja.formulahelper.watchkitapp</key>
+        <string>FormulaHelperWatchAppStore</string>
     </dict>
 </dict>
 </plist>
