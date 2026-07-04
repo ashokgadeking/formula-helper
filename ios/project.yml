@@ -143,3 +143,4 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.ashokteja.formulahelper.watchkitapp.tests
         DEVELOPMENT_TEAM: "TV6FL9FHCE"
         CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: YES
